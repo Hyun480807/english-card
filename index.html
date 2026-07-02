@@ -136,6 +136,14 @@
             width: 1.1em;
             min-width: 1.1em;
         }
+        #edit-btn {
+            align-items: center !important;
+            line-height: 1 !important;
+        }
+        #edit-btn .top-btn-emoji,
+        #edit-btn .top-btn-label {
+            line-height: 1 !important;
+        }
         #add-sentence-btn {
             gap: 0.35rem !important;
         }
@@ -1581,7 +1589,7 @@ const originalCards = [{"ko":"거울을 보고 있어요","en":"I'm looking in t
         function turnOffEditModeAndSave() {
             if(!isEditing) return;
             isEditing = false;
-            editBtn.innerHTML = '✏️ 수정';
+            editBtn.innerHTML = '<span class="top-btn-emoji">✏️</span><span class="top-btn-label">수정</span>';
             editBtn.classList.replace('bg-amber-300', 'bg-slate-200');
             
             editableEls.forEach(el => {
@@ -1626,7 +1634,7 @@ const originalCards = [{"ko":"거울을 보고 있어요","en":"I'm looking in t
                 turnOffEditModeAndSave();
             } else {
                 isEditing = true;
-                editBtn.innerHTML = '💾 완료';
+                editBtn.innerHTML = '<span class="top-btn-emoji">💾</span><span class="top-btn-label">완료</span>';
                 editBtn.classList.replace('bg-slate-200', 'bg-amber-300');
                 
                 editableEls.forEach(el => {
