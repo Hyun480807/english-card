@@ -1421,6 +1421,56 @@ body.dark #next-btn:disabled span {
     }
 </style>
 
+
+<style id="mobile-pointer-sort-style">
+    /* 모바일 수정 모드: 터치 드래그 전용 손잡이 */
+    .list-drag-handle,
+    .category-drag-handle {
+        -webkit-user-select: none !important;
+        user-select: none !important;
+        -webkit-touch-callout: none !important;
+    }
+    body.mobile-sort-active {
+        touch-action: none !important;
+        overscroll-behavior: none !important;
+        -webkit-user-select: none !important;
+        user-select: none !important;
+    }
+    body.mobile-sort-active #list-container,
+    body.mobile-sort-active #category-container {
+        scroll-behavior: auto !important;
+    }
+    @media (hover: none), (pointer: coarse) {
+        .list-drag-handle {
+            width: 2.65rem !important;
+            min-width: 2.65rem !important;
+            height: 2.75rem !important;
+            font-size: 1.25rem !important;
+            touch-action: none !important;
+            cursor: grab;
+        }
+        #category-container .category-edit-draggable {
+            padding-right: 2.55rem !important;
+        }
+        .category-drag-handle {
+            right: 0.22rem !important;
+            bottom: 0.2rem !important;
+            width: 2rem !important;
+            height: 2rem !important;
+            font-size: 1rem !important;
+            pointer-events: auto !important;
+            touch-action: none !important;
+            cursor: grab;
+            z-index: 8;
+        }
+        .list-drag-handle:active,
+        .category-drag-handle:active {
+            cursor: grabbing;
+            transform: scale(0.96);
+        }
+    }
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 28.80px; --main-question-size: 24.00px; --main-desc-size: 16.80px; --main-desc-line-height: 1.62; --list-title-size: 21.60px; --list-subtitle-size: 14.40px; --list-category-size: 13.82px; --list-category-count-size: 12.00px; --list-ko-size: 16.80px; --list-en-size: 14.40px; --list-meta-size: 12.00px; width: 550px; height: 979px;">
@@ -4642,6 +4692,527 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
     });
 
     applyScales();
+})();
+</script>
+
+
+<script id="mobile-pointer-sort-script">
+(() => {
+    let mobileSortState = null;
+    let mobileHitTestFrame = 0;
+
+    function isTouchLikePointer(event) {
+        return event && event.pointerType && event.pointerType !== 'mouse';
+    }
+
+    function listCardFromRow(row) {
+        if (!row) return null;
+        const key = String(row.dataset.listRowKey || '');
+        return getEditableVisibleList().find(card => String(getListRowKey(card)) === key) || null;
+    }
+
+    function updateMobileDropTarget() {
+        if (!mobileSortState) return;
+        const { clientX, clientY, type, sourceElement } = mobileSortState;
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+
+        const hit = document.elementFromPoint(clientX, clientY);
+        if (type === 'list') {
+            updateListDragPointer(clientY);
+            const row = hit && hit.closest ? hit.closest('#list-container [data-list-row-key]') : null;
+            if (!row || row === sourceElement) {
+                clearListDropIndicators();
+                mobileSortState.targetCard = null;
+                return;
+            }
+            const targetCard = listCardFromRow(row);
+            if (!targetCard || !listDragState || targetCard === listDragState.card) {
+                clearListDropIndicators();
+                mobileSortState.targetCard = null;
+                return;
+            }
+            const rect = row.getBoundingClientRect();
+            const dropAfter = clientY >= rect.top + rect.height / 2;
+            clearListDropIndicators();
+            row.classList.add(dropAfter ? 'list-drop-after' : 'list-drop-before');
+            listDragState.targetCard = targetCard;
+            listDragState.dropAfter = dropAfter;
+            mobileSortState.targetCard = targetCard;
+            mobileSortState.dropAfter = dropAfter;
+            return;
+        }
+
+        updateCategoryDragPointer(clientY);
+        const button = hit && hit.closest ? hit.closest('#category-container [data-category-key]') : null;
+        if (!button || button === sourceElement) {
+            clearCategoryDropIndicators();
+            mobileSortState.targetKey = '';
+            return;
+        }
+        const targetKey = String(button.dataset.categoryKey || '');
+        if (!targetKey || !categoryDragState || targetKey === categoryDragState.categoryKey) {
+            clearCategoryDropIndicators();
+            mobileSortState.targetKey = '';
+            return;
+        }
+        const rect = button.getBoundingClientRect();
+        const dropAfter = clientX >= rect.left + rect.width / 2;
+        clearCategoryDropIndicators();
+        button.classList.add(dropAfter ? 'category-drop-after' : 'category-drop-before');
+        categoryDragState.targetKey = targetKey;
+        categoryDragState.dropAfter = dropAfter;
+        mobileSortState.targetKey = targetKey;
+        mobileSortState.dropAfter = dropAfter;
+    }
+
+    function runMobileHitTest() {
+        if (!mobileSortState) {
+            mobileHitTestFrame = 0;
+            return;
+        }
+        updateMobileDropTarget();
+        mobileHitTestFrame = requestAnimationFrame(runMobileHitTest);
+    }
+
+    function restoreMobileSortUi() {
+        document.body.classList.remove('mobile-sort-active');
+        if (mobileHitTestFrame) cancelAnimationFrame(mobileHitTestFrame);
+        mobileHitTestFrame = 0;
+        mobileSortState = null;
+    }
+
+    function finishMobileListSort(commit) {
+        if (!mobileSortState || mobileSortState.type !== 'list') return;
+        const state = mobileSortState;
+        const dragCard = listDragState && listDragState.card;
+        const targetCard = state.targetCard;
+        const dropAfter = !!state.dropAfter;
+        const container = document.getElementById('list-container');
+        const scrollTop = container ? container.scrollTop : 0;
+        let changed = false;
+
+        if (commit && dragCard && targetCard) {
+            changed = reorderListSentence(dragCard, targetCard, dropAfter);
+        }
+        endListDrag();
+        restoreMobileSortUi();
+
+        if (!changed) return;
+        renderListModal();
+        requestAnimationFrame(() => {
+            const nextContainer = document.getElementById('list-container');
+            if (nextContainer) nextContainer.scrollTop = scrollTop;
+            const movedRow = document.querySelector(`[data-list-row-key="${CSS.escape(getListRowKey(dragCard))}"]`);
+            if (movedRow) movedRow.scrollIntoView({ block: 'nearest' });
+        });
+        showToast('문장 순서를 변경했습니다.');
+    }
+
+    function finishMobileCategorySort(commit) {
+        if (!mobileSortState || mobileSortState.type !== 'category') return;
+        const state = mobileSortState;
+        const dragKey = categoryDragState && categoryDragState.categoryKey;
+        const targetKey = state.targetKey;
+        const dropAfter = !!state.dropAfter;
+        const container = document.getElementById('category-container');
+        const scrollTop = container ? container.scrollTop : 0;
+        let changed = false;
+
+        if (commit && dragKey && targetKey) {
+            changed = reorderCategoryButtons(dragKey, targetKey, dropAfter);
+        }
+        endCategoryDrag();
+        restoreMobileSortUi();
+
+        if (!changed) return;
+        renderListModal();
+        renderCard();
+        requestAnimationFrame(() => {
+            const nextContainer = document.getElementById('category-container');
+            if (nextContainer) nextContainer.scrollTop = scrollTop;
+            const movedButton = [...document.querySelectorAll('#category-container [data-category-key]')]
+                .find(button => button.dataset.categoryKey === dragKey);
+            if (movedButton) movedButton.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+        showToast('대분류 순서를 변경했습니다.');
+    }
+
+    function finishMobileSort(commit) {
+        if (!mobileSortState) return;
+        if (mobileSortState.type === 'list') finishMobileListSort(commit);
+        else finishMobileCategorySort(commit);
+    }
+
+    document.addEventListener('pointerdown', event => {
+        if (!isTouchLikePointer(event) || !isListEditMode || mobileSortState) return;
+        const listHandle = event.target.closest && event.target.closest('.list-drag-handle');
+        const categoryHandle = event.target.closest && event.target.closest('.category-drag-handle');
+        if (!listHandle && !categoryHandle) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        document.body.classList.add('mobile-sort-active');
+
+        if (listHandle) {
+            const row = listHandle.closest('#list-container [data-list-row-key]');
+            const card = listCardFromRow(row);
+            if (!row || !card) {
+                document.body.classList.remove('mobile-sort-active');
+                return;
+            }
+            beginListDrag(card, row, {
+                target: listHandle,
+                clientY: event.clientY,
+                dataTransfer: null,
+                preventDefault() {}
+            });
+            if (!listDragState) {
+                document.body.classList.remove('mobile-sort-active');
+                return;
+            }
+            listDragState.pointerId = event.pointerId;
+            mobileSortState = {
+                type: 'list',
+                pointerId: event.pointerId,
+                captureElement: listHandle,
+                sourceElement: row,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                targetCard: null,
+                dropAfter: false
+            };
+        } else {
+            const button = categoryHandle.closest('#category-container [data-category-key]');
+            const categoryKey = button && String(button.dataset.categoryKey || '');
+            if (!button || !categoryKey) {
+                document.body.classList.remove('mobile-sort-active');
+                return;
+            }
+            beginCategoryDrag(categoryKey, button, {
+                target: categoryHandle,
+                clientY: event.clientY,
+                dataTransfer: null,
+                preventDefault() {}
+            });
+            if (!categoryDragState) {
+                document.body.classList.remove('mobile-sort-active');
+                return;
+            }
+            categoryDragState.pointerId = event.pointerId;
+            mobileSortState = {
+                type: 'category',
+                pointerId: event.pointerId,
+                captureElement: categoryHandle,
+                sourceElement: button,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                targetKey: '',
+                dropAfter: false
+            };
+        }
+
+        try { mobileSortState.captureElement.setPointerCapture(event.pointerId); } catch (_) {}
+        if (!mobileHitTestFrame) mobileHitTestFrame = requestAnimationFrame(runMobileHitTest);
+    }, { capture: true, passive: false });
+
+    document.addEventListener('pointermove', event => {
+        if (!mobileSortState || event.pointerId !== mobileSortState.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        mobileSortState.clientX = event.clientX;
+        mobileSortState.clientY = event.clientY;
+        updateMobileDropTarget();
+    }, { capture: true, passive: false });
+
+    document.addEventListener('pointerup', event => {
+        if (!mobileSortState || event.pointerId !== mobileSortState.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        mobileSortState.clientX = event.clientX;
+        mobileSortState.clientY = event.clientY;
+        updateMobileDropTarget();
+        try { mobileSortState.captureElement.releasePointerCapture(event.pointerId); } catch (_) {}
+        finishMobileSort(true);
+    }, { capture: true, passive: false });
+
+    document.addEventListener('pointercancel', event => {
+        if (!mobileSortState || event.pointerId !== mobileSortState.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        finishMobileSort(false);
+    }, { capture: true, passive: false });
+
+    document.addEventListener('contextmenu', event => {
+        if (event.target.closest && event.target.closest('.list-drag-handle, .category-drag-handle')) {
+            event.preventDefault();
+        }
+    }, { capture: true });
+})();
+</script>
+
+
+
+<style id="modal-resize-responsive-fix">
+    /* 목록 화면에서도 메인 창 크기 조절을 유지함 */
+    @media (min-width: 768px) {
+        #app-shell.list-modal-open {
+            resize: both !important;
+            overflow: auto !important;
+        }
+        #app-shell.list-modal-open::-webkit-resizer {
+            display: block !important;
+            background: transparent !important;
+        }
+
+        /* 기본 점 모양 대신 모서리 전체를 잡는 전용 크기 조절 영역 */
+        .modal-shell-resize-handle {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 24px;
+            height: 24px;
+            z-index: 120;
+            cursor: nwse-resize;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            background:
+                linear-gradient(135deg,
+                    transparent 0 52%,
+                    rgba(100, 116, 139, 0.00) 52% 58%,
+                    transparent 58% 100%);
+        }
+        .modal-shell-resize-handle::after {
+            content: '';
+            position: absolute;
+            right: 4px;
+            bottom: 4px;
+            width: 12px;
+            height: 12px;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            background: repeating-linear-gradient(
+                135deg,
+                transparent 0 3px,
+                rgba(100, 116, 139, 0.72) 3px 5px
+            );
+            clip-path: polygon(100% 0, 100% 100%, 0 100%);
+        }
+        .modal-shell-resize-handle:hover::after,
+        .modal-shell-resize-handle.is-resizing::after {
+            opacity: 1;
+        }
+        body.dark .modal-shell-resize-handle::after {
+            background: repeating-linear-gradient(
+                135deg,
+                transparent 0 3px,
+                rgba(203, 213, 225, 0.72) 3px 5px
+            );
+        }
+    }
+
+    @media (max-width: 767px) {
+        .modal-shell-resize-handle { display: none !important; }
+    }
+
+    /* 문장 추가 화면: 창 높이가 커지면 입력칸과 이모지 영역도 남는 공간을 함께 사용함 */
+    #add-modal,
+    #add-modal-content {
+        min-width: 0;
+        min-height: 0;
+    }
+
+    @media (min-width: 768px) {
+        #add-modal-content {
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows:
+                minmax(88px, 1.00fr)
+                minmax(88px, 1.00fr)
+                minmax(116px, 1.35fr)
+                minmax(68px, auto)
+                minmax(220px, 3.20fr)
+                minmax(48px, auto);
+            align-content: stretch;
+            gap: calc(0.75rem * var(--add-modal-scale, 1));
+            height: 100%;
+            padding: calc(1rem * var(--add-modal-scale, 1)) !important;
+            overflow-y: auto;
+        }
+
+        #add-modal-content.space-y-3 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+        }
+
+        #add-modal-content > label {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            min-height: 0;
+        }
+
+        #add-modal-content > label > textarea {
+            flex: 1 1 auto;
+            width: 100%;
+            height: 100% !important;
+            min-height: 54px;
+            resize: none;
+            padding: calc(0.75rem * var(--add-modal-scale, 1));
+            font-size: calc(0.875rem * var(--add-modal-scale, 1));
+        }
+
+        #add-modal-content > label > select {
+            padding: calc(0.75rem * var(--add-modal-scale, 1));
+            font-size: calc(0.875rem * var(--add-modal-scale, 1));
+        }
+
+        .emoji-picker-wrap {
+            min-width: 0;
+            min-height: 0;
+            height: 100%;
+        }
+
+        .emoji-selected-row {
+            min-height: calc(46px * var(--add-modal-scale, 1));
+            padding: calc(0.55rem * var(--add-modal-scale, 1)) calc(0.75rem * var(--add-modal-scale, 1));
+        }
+
+        #selected-emoji-display {
+            width: calc(2.45rem * var(--add-modal-scale, 1));
+            height: calc(2.45rem * var(--add-modal-scale, 1));
+            font-size: calc(1.55rem * var(--add-modal-scale, 1));
+        }
+
+        #emoji-picker {
+            flex: 1 1 auto;
+            width: 100%;
+            height: auto !important;
+            max-height: none !important;
+            min-height: 180px;
+            grid-template-columns: repeat(auto-fit, minmax(calc(38px * var(--add-modal-scale, 1)), 1fr));
+            gap: calc(0.38rem * var(--add-modal-scale, 1));
+            padding: calc(0.65rem * var(--add-modal-scale, 1));
+        }
+
+        .emoji-choice-btn {
+            font-size: calc(1.45rem * var(--add-modal-scale, 1));
+        }
+
+        #save-add-btn {
+            margin-top: 0 !important;
+            min-height: calc(48px * var(--add-modal-scale, 1));
+            padding-top: calc(0.75rem * var(--add-modal-scale, 1));
+            padding-bottom: calc(0.75rem * var(--add-modal-scale, 1));
+            font-size: calc(1rem * var(--add-modal-scale, 1));
+        }
+    }
+</style>
+
+<script id="modal-resize-responsive-script">
+(() => {
+    const desktopQuery = window.matchMedia('(min-width: 768px)');
+    const shell = document.getElementById('app-shell');
+    if (!shell) return;
+
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function updateAddModalScale() {
+        if (!desktopQuery.matches) {
+            shell.style.removeProperty('--add-modal-scale');
+            return;
+        }
+        const rect = shell.getBoundingClientRect();
+        const widthScale = rect.width / 448;
+        const heightScale = rect.height / 760;
+        const scale = clamp(Math.min(widthScale, heightScale), 1, 1.34);
+        shell.style.setProperty('--add-modal-scale', scale.toFixed(3));
+    }
+
+    function createResizeHandle(modal, label) {
+        if (!modal || modal.querySelector(':scope > .modal-shell-resize-handle')) return;
+        const handle = document.createElement('div');
+        handle.className = 'modal-shell-resize-handle';
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'horizontal');
+        handle.setAttribute('aria-label', label);
+        handle.title = label;
+        modal.appendChild(handle);
+
+        let state = null;
+
+        const stopResize = event => {
+            if (!state) return;
+            if (event && event.pointerId !== state.pointerId) return;
+            handle.classList.remove('is-resizing');
+            document.body.style.removeProperty('user-select');
+            document.body.style.removeProperty('-webkit-user-select');
+            try { handle.releasePointerCapture(state.pointerId); } catch (_) {}
+            state = null;
+            updateAddModalScale();
+        };
+
+        handle.addEventListener('pointerdown', event => {
+            if (!desktopQuery.matches || event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = shell.getBoundingClientRect();
+            state = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                startWidth: rect.width,
+                startHeight: rect.height
+            };
+            handle.classList.add('is-resizing');
+            document.body.style.userSelect = 'none';
+            document.body.style.webkitUserSelect = 'none';
+            try { handle.setPointerCapture(event.pointerId); } catch (_) {}
+        }, { passive: false });
+
+        handle.addEventListener('pointermove', event => {
+            if (!state || event.pointerId !== state.pointerId) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            const maxWidth = Math.max(1, window.innerWidth - 32);
+            const maxHeight = Math.max(1, window.innerHeight - 32);
+            const minWidth = Math.min(360, maxWidth);
+            const minHeight = Math.min(560, maxHeight);
+            const width = clamp(state.startWidth + event.clientX - state.startX, minWidth, maxWidth);
+            const height = clamp(state.startHeight + event.clientY - state.startY, minHeight, maxHeight);
+
+            shell.style.width = `${Math.round(width)}px`;
+            shell.style.height = `${Math.round(height)}px`;
+            updateAddModalScale();
+        }, { passive: false });
+
+        handle.addEventListener('pointerup', stopResize, { passive: false });
+        handle.addEventListener('pointercancel', stopResize, { passive: false });
+        handle.addEventListener('lostpointercapture', stopResize);
+    }
+
+    function initialize() {
+        createResizeHandle(document.getElementById('list-modal'), '목록 창 크기 조절');
+        createResizeHandle(document.getElementById('add-modal'), '문장 추가 창 크기 조절');
+        updateAddModalScale();
+
+        if ('ResizeObserver' in window) {
+            const observer = new ResizeObserver(updateAddModalScale);
+            observer.observe(shell);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initialize, { once: true });
+    } else {
+        initialize();
+    }
+
+    desktopQuery.addEventListener?.('change', updateAddModalScale);
+    window.addEventListener('resize', updateAddModalScale);
 })();
 </script>
 
