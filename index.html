@@ -1926,6 +1926,158 @@ body.dark #next-btn:disabled span {
         }
     }
 </style>
+
+<style id="mobile-list-layout-repair-final">
+    /* Desktop: wrappers do not change the existing one-line action layout. */
+    .list-action-top,
+    .list-action-bottom {
+        display: contents;
+    }
+
+    @media (max-width: 640px) {
+        /* Header: title and every control stay on one compact line. */
+        #list-modal .list-modal-header {
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 0.3rem !important;
+            padding: 0.55rem 0.55rem !important;
+            min-width: 0 !important;
+        }
+        #list-modal .list-modal-header > .min-w-0 {
+            width: auto !important;
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+        }
+        #list-modal .list-modal-header h2 {
+            white-space: nowrap !important;
+            font-size: 0.78rem !important;
+            line-height: 1 !important;
+            letter-spacing: -0.03em !important;
+        }
+        #list-toggle-controls {
+            width: auto !important;
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            gap: 0.12rem !important;
+            overflow: visible !important;
+        }
+        #list-toggle-controls .font-size-controls {
+            display: flex !important;
+            flex: 0 0 auto !important;
+            gap: 0.08rem !important;
+        }
+        #list-toggle-controls .font-size-btn {
+            width: 1.38rem !important;
+            min-width: 1.38rem !important;
+            height: 1.48rem !important;
+            min-height: 1.48rem !important;
+            padding: 0 !important;
+            border-radius: 0.42rem !important;
+            font-size: 0.74rem !important;
+            line-height: 1 !important;
+        }
+        #list-toggle-controls > button {
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+            min-height: 1.48rem !important;
+            height: 1.48rem !important;
+            padding: 0.18rem 0.27rem !important;
+            border-radius: 0.42rem !important;
+            font-size: 8px !important;
+            line-height: 1 !important;
+            white-space: nowrap !important;
+        }
+        #close-list-btn {
+            width: 1.48rem !important;
+            padding: 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        #close-list-btn .close-list-label {
+            display: none !important;
+        }
+
+        /* Sentence rows: restore stable full-width text and a right-aligned 2-row action block. */
+        #list-container > [data-list-row-key]:not(.list-edit-row) {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            justify-content: flex-start !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            gap: 0.42rem !important;
+            padding-left: 0.7rem !important;
+            padding-right: 0.7rem !important;
+        }
+        #list-container > [data-list-row-key]:not(.list-edit-row) > .cursor-pointer {
+            display: block !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+            overflow-wrap: anywhere !important;
+        }
+        #list-container > [data-list-row-key]:not(.list-edit-row) > .list-action-group {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            align-self: flex-end !important;
+            width: max-content !important;
+            max-width: 100% !important;
+            margin-left: auto !important;
+            gap: 0.28rem !important;
+        }
+        #list-container .list-action-top,
+        #list-container .list-action-bottom {
+            display: flex !important;
+            align-items: center !important;
+        }
+        #list-container .list-action-bottom {
+            justify-content: flex-end !important;
+            gap: 0.2rem !important;
+            width: max-content !important;
+        }
+        #list-container .list-action-top {
+            justify-content: center !important;
+            gap: 0.32rem !important;
+            width: 100% !important;
+        }
+        #list-container .list-action-group .list-bookmark-btn,
+        #list-container .list-action-group .list-difficulty-btn,
+        #list-container .list-action-group .list-study-toggle-btn,
+        #list-container .list-action-group .list-copy-btn,
+        #list-container .list-action-group .delete-sentence-btn {
+            grid-column: auto !important;
+            grid-row: auto !important;
+            order: initial !important;
+            justify-self: auto !important;
+            margin-left: 0 !important;
+        }
+        #list-container .list-action-group .list-bookmark-btn {
+            width: 1.2rem !important;
+            min-width: 1.2rem !important;
+            height: 1.65rem !important;
+            padding: 0 !important;
+        }
+        #list-container .list-action-group .list-difficulty-btn {
+            min-height: 1.65rem !important;
+        }
+        #list-container .list-action-group .list-study-toggle-btn,
+        #list-container .list-action-group .list-copy-btn,
+        #list-container .list-action-group .delete-sentence-btn {
+            min-height: 1.65rem !important;
+            padding: 0.28rem 0.42rem !important;
+            font-size: 9px !important;
+        }
+    }
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 31.20px; --main-question-size: 26.00px; --main-desc-size: 18.20px; --main-desc-line-height: 1.65; --list-title-size: 20.16px; --list-subtitle-size: 13.44px; --list-category-size: 12.90px; --list-category-count-size: 11.20px; --list-ko-size: 15.68px; --list-en-size: 13.44px; --list-meta-size: 11.20px; width: 433px; height: 910px; --add-modal-scale: 1.000;">
@@ -2069,14 +2221,14 @@ body.dark #next-btn:disabled span {
                 </div>
                 <div id="list-toggle-controls" class="flex items-center gap-1.5 shrink-0">
                     <div class="font-size-controls" aria-label="목록 글씨 크기 조절">
-                        <button id="list-font-decrease-btn" type="button" class="font-size-btn" title="목록 글씨 작게" aria-label="목록 글씨 작게">-</button>
                         <button id="list-font-increase-btn" type="button" class="font-size-btn" title="목록 글씨 크게" aria-label="목록 글씨 크게">+</button>
+                        <button id="list-font-decrease-btn" type="button" class="font-size-btn" title="목록 글씨 작게" aria-label="목록 글씨 작게">-</button>
                     </div>
                     <button id="list-random-btn" type="button" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors bg-indigo-50 hover:bg-indigo-100 text-indigo-700"><span>랜덤</span></button>
                     <button id="list-edit-btn" type="button" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors bg-indigo-50 hover:bg-indigo-100 text-indigo-700">수정</button>
                     <button id="list-hide-en-btn" type="button" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors bg-indigo-600 hover:bg-indigo-500 text-white" title="영어 숨김 상태 · 눌러서 표시"><span>영어</span></button>
                     <button id="list-hide-ko-btn" type="button" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors bg-indigo-50 hover:bg-indigo-100 text-indigo-700" title="한글 표시 상태 · 눌러서 숨김"><span>한글</span></button>
-                    <button id="close-list-btn" type="button" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors"><span>닫기 ✕</span></button>
+                    <button id="close-list-btn" type="button" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors"><span class="close-list-label">닫기&nbsp;</span><span aria-hidden="true">✕</span></button>
                 </div>
             </div>
             <div id="list-edit-panel" class="list-edit-panel hidden"></div>
@@ -4796,6 +4948,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
                 const actionBox = document.createElement('div');
                 actionBox.className = 'list-action-group shrink-0 flex items-center justify-end gap-1';
+                const topActionRow = document.createElement('div');
+                topActionRow.className = 'list-action-top';
+                const bottomActionRow = document.createElement('div');
+                bottomActionRow.className = 'list-action-bottom';
 
                 const bookmarkBtn = document.createElement('button');
                 bookmarkBtn.type = 'button';
@@ -4804,11 +4960,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 bookmarkBtn.title = card.bookmarked ? '북마크 해제' : '북마크 추가';
                 bookmarkBtn.setAttribute('aria-label', bookmarkBtn.title);
                 bookmarkBtn.addEventListener('click', (e) => toggleListBookmark(card, e));
-                actionBox.appendChild(bookmarkBtn);
+                topActionRow.appendChild(bookmarkBtn);
 
                 const difficultyBtn=document.createElement('button');difficultyBtn.type='button';difficultyBtn.className='list-difficulty-btn';
                 if(card.bookmarked){const meta=getDifficultyMeta(card.difficulty);difficultyBtn.dataset.level=meta.key;difficultyBtn.textContent=meta.shortLabel;difficultyBtn.title=`난이도: ${meta.label} · 눌러서 변경`;}else{difficultyBtn.dataset.level='none';difficultyBtn.textContent='난이도';difficultyBtn.title='북마크한 문장만 난이도를 설정할 수 있음';}
-                difficultyBtn.setAttribute('aria-label',difficultyBtn.title);difficultyBtn.addEventListener('click',e=>cycleCardDifficulty(card,e));actionBox.appendChild(difficultyBtn);
+                difficultyBtn.setAttribute('aria-label',difficultyBtn.title);difficultyBtn.addEventListener('click',e=>cycleCardDifficulty(card,e));topActionRow.appendChild(difficultyBtn);
 
                 const sentenceBtn = document.createElement('button');
                 sentenceBtn.type = 'button';
@@ -4825,7 +4981,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     else listRowRevealSet.add(rowKey);
                     renderListModal();
                 });
-                actionBox.appendChild(sentenceBtn);
+                bottomActionRow.appendChild(sentenceBtn);
 
                 const copyBtn = document.createElement('button');
                 copyBtn.type = 'button';
@@ -4833,7 +4989,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 copyBtn.textContent = getUiButtonLabel('copy', '복사');
                 copyBtn.title = '영어 문장 복사';
                 copyBtn.addEventListener('click', (e) => copyEnglishSentence(card, e));
-                actionBox.appendChild(copyBtn);
+                bottomActionRow.appendChild(copyBtn);
 
                 const delBtn = document.createElement('button');
                 delBtn.type = 'button';
@@ -4843,8 +4999,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     e.stopPropagation();
                     deleteSentence(card);
                 });
-                actionBox.appendChild(delBtn);
+                bottomActionRow.appendChild(delBtn);
 
+                actionBox.appendChild(topActionRow);
+                actionBox.appendChild(bottomActionRow);
                 div.appendChild(actionBox);
                 container.appendChild(div);
             });
