@@ -2078,6 +2078,121 @@ body.dark #next-btn:disabled span {
     }
 </style>
 
+
+<style id="mobile-list-card-and-header-final-fix">
+@media (max-width: 640px) {
+    /* 상단: 제목 옆 기능 버튼을 한 줄로 유지하면서 터치 크기를 조금 확대 */
+    #list-modal .list-modal-header {
+        padding: 0.62rem 0.62rem !important;
+        gap: 0.38rem !important;
+    }
+    #list-modal .list-modal-header h2 {
+        font-size: 0.82rem !important;
+        letter-spacing: -0.035em !important;
+    }
+    #list-toggle-controls {
+        gap: 0.16rem !important;
+    }
+    #list-toggle-controls .font-size-controls {
+        gap: 0.12rem !important;
+    }
+    #list-toggle-controls .font-size-btn {
+        width: 1.72rem !important;
+        min-width: 1.72rem !important;
+        height: 1.82rem !important;
+        min-height: 1.82rem !important;
+        border-radius: 0.5rem !important;
+        font-size: 0.88rem !important;
+    }
+    #list-toggle-controls > button {
+        height: 1.82rem !important;
+        min-height: 1.82rem !important;
+        padding: 0.22rem 0.38rem !important;
+        border-radius: 0.5rem !important;
+        font-size: 9px !important;
+    }
+    #close-list-btn {
+        width: 1.82rem !important;
+        min-width: 1.82rem !important;
+        padding: 0 !important;
+    }
+
+    /* 문장 상자: 텍스트는 왼쪽, 2줄 버튼 묶음은 오른쪽에 함께 들어가도록 구성 */
+    #list-container {
+        padding: 0.72rem !important;
+    }
+    #list-container > [data-list-row-key]:not(.list-edit-row) {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) max-content !important;
+        grid-template-rows: auto !important;
+        align-items: center !important;
+        justify-content: stretch !important;
+        column-gap: 0.62rem !important;
+        row-gap: 0 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        min-height: 5.4rem !important;
+        padding: 0.78rem 0.72rem !important;
+    }
+    #list-container > [data-list-row-key]:not(.list-edit-row) > .cursor-pointer {
+        grid-column: 1 !important;
+        grid-row: 1 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        align-self: center !important;
+    }
+    #list-container > [data-list-row-key]:not(.list-edit-row) > .list-action-group {
+        grid-column: 2 !important;
+        grid-row: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        align-items: stretch !important;
+        align-self: center !important;
+        width: max-content !important;
+        margin: 0 !important;
+        gap: 0.34rem !important;
+    }
+    #list-container .list-action-top,
+    #list-container .list-action-bottom {
+        display: flex !important;
+        align-items: center !important;
+        width: 100% !important;
+    }
+    #list-container .list-action-top {
+        justify-content: center !important;
+        gap: 0.38rem !important;
+    }
+    #list-container .list-action-bottom {
+        justify-content: center !important;
+        gap: 0.24rem !important;
+    }
+    #list-container .list-action-group .list-bookmark-btn {
+        width: 1.4rem !important;
+        min-width: 1.4rem !important;
+        height: 1.9rem !important;
+        min-height: 1.9rem !important;
+        padding: 0 !important;
+        font-size: 1.35rem !important;
+    }
+    #list-container .list-action-group .list-difficulty-btn {
+        min-width: 3.15rem !important;
+        height: 1.9rem !important;
+        min-height: 1.9rem !important;
+        padding: 0.28rem 0.48rem !important;
+        font-size: 10px !important;
+    }
+    #list-container .list-action-group .list-study-toggle-btn,
+    #list-container .list-action-group .list-copy-btn,
+    #list-container .list-action-group .delete-sentence-btn {
+        height: 1.9rem !important;
+        min-height: 1.9rem !important;
+        padding: 0.3rem 0.48rem !important;
+        font-size: 10px !important;
+    }
+}
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 31.20px; --main-question-size: 26.00px; --main-desc-size: 18.20px; --main-desc-line-height: 1.65; --list-title-size: 20.16px; --list-subtitle-size: 13.44px; --list-category-size: 12.90px; --list-category-count-size: 11.20px; --list-ko-size: 15.68px; --list-en-size: 13.44px; --list-meta-size: 11.20px; width: 433px; height: 910px; --add-modal-scale: 1.000;">
