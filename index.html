@@ -2193,6 +2193,149 @@ body.dark #next-btn:disabled span {
 }
 </style>
 
+
+<style id="mobile-list-header-button-gap-unified">
+@media (max-width: 640px) {
+    /* 모바일 목록 상단 모든 버튼 사이 간격을 동일하게 약 2px 확대 */
+    #list-toggle-controls,
+    #list-toggle-controls .font-size-controls {
+        gap: 4.5px !important;
+    }
+}
+</style>
+
+
+<style id="mobile-list-header-spacing-alignment-final">
+@media (max-width: 640px) {
+    /* 난이도 필터 영역과 상단 헤더의 좌우 끝선을 동일하게 정렬 */
+    #list-modal .list-modal-header {
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+    }
+
+    /* 상단 모든 버튼 사이 간격을 기존보다 2px 넓힌 6.5px로 통일 */
+    #list-toggle-controls,
+    #list-toggle-controls .font-size-controls {
+        gap: 6.5px !important;
+    }
+
+    /* + / − 기호를 버튼의 실제 가로·세로 정중앙에 고정 */
+    #list-toggle-controls .font-size-btn {
+        display: grid !important;
+        place-items: center !important;
+        position: relative !important;
+        padding: 0 !important;
+        line-height: 0 !important;
+        font-size: 0 !important;
+        text-align: center !important;
+    }
+    #list-font-increase-btn::before,
+    #list-font-decrease-btn::before {
+        display: block;
+        font-size: 0.88rem;
+        line-height: 1;
+        text-align: center;
+        transform: translateY(-0.25px);
+    }
+    #list-font-increase-btn::before { content: "+"; }
+    #list-font-decrease-btn::before { content: "−"; }
+}
+</style>
+
+
+<style id="mobile-list-controls-precision-final">
+@media (max-width: 640px) {
+    /* + / −를 글꼴 기준선이 아닌 실제 도형 중심으로 정확히 배치 */
+    #list-font-increase-btn,
+    #list-font-decrease-btn {
+        position: relative !important;
+        display: block !important;
+        padding: 0 !important;
+        line-height: 0 !important;
+        font-size: 0 !important;
+        text-align: center !important;
+        overflow: hidden !important;
+    }
+    #list-font-increase-btn::before,
+    #list-font-decrease-btn::before {
+        content: "" !important;
+        position: absolute !important;
+        inset: 0 !important;
+        margin: auto !important;
+        display: block !important;
+        transform: none !important;
+        pointer-events: none !important;
+        background-color: currentColor !important;
+        border-radius: 999px !important;
+    }
+    #list-font-increase-btn::before {
+        width: 11px !important;
+        height: 2px !important;
+    }
+    #list-font-increase-btn::after {
+        content: "" !important;
+        position: absolute !important;
+        inset: 0 !important;
+        margin: auto !important;
+        display: block !important;
+        width: 2px !important;
+        height: 11px !important;
+        background-color: currentColor !important;
+        border-radius: 999px !important;
+        transform: none !important;
+        pointer-events: none !important;
+    }
+    #list-font-decrease-btn::before {
+        width: 11px !important;
+        height: 2px !important;
+    }
+    #list-font-decrease-btn::after {
+        content: none !important;
+    }
+
+    /* 모바일 문장 행의 위·아래 버튼 높이를 하나의 값으로 완전히 통일 */
+    #list-container > [data-list-row-key]:not(.list-edit-row) {
+        --mobile-list-action-height: 1.9rem;
+        --mobile-list-action-row-gap: 0.34rem;
+        padding-top: 0.78rem !important;
+        padding-bottom: 0.78rem !important;
+        align-items: stretch !important;
+    }
+    #list-container > [data-list-row-key]:not(.list-edit-row) > .list-action-group {
+        align-self: stretch !important;
+        justify-content: center !important;
+        gap: var(--mobile-list-action-row-gap) !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    #list-container .list-action-top,
+    #list-container .list-action-bottom {
+        min-height: var(--mobile-list-action-height) !important;
+        height: var(--mobile-list-action-height) !important;
+        max-height: var(--mobile-list-action-height) !important;
+        box-sizing: border-box !important;
+    }
+    #list-container .list-action-group .list-bookmark-btn,
+    #list-container .list-action-group .list-difficulty-btn,
+    #list-container .list-action-group .list-study-toggle-btn,
+    #list-container .list-action-group .list-copy-btn,
+    #list-container .list-action-group .delete-sentence-btn {
+        height: var(--mobile-list-action-height) !important;
+        min-height: var(--mobile-list-action-height) !important;
+        max-height: var(--mobile-list-action-height) !important;
+        box-sizing: border-box !important;
+        align-self: center !important;
+    }
+
+    /* 버튼 묶음을 문장 상자 세로 정중앙에 두어 위 난이도 여백과 아래 삭제 여백을 동일하게 유지 */
+    #list-container > [data-list-row-key]:not(.list-edit-row) > .list-action-group {
+        place-self: stretch end !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+}
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 31.20px; --main-question-size: 26.00px; --main-desc-size: 18.20px; --main-desc-line-height: 1.65; --list-title-size: 20.16px; --list-subtitle-size: 13.44px; --list-category-size: 12.90px; --list-category-count-size: 11.20px; --list-ko-size: 15.68px; --list-en-size: 13.44px; --list-meta-size: 11.20px; width: 433px; height: 910px; --add-modal-scale: 1.000;">
