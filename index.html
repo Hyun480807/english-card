@@ -4366,7 +4366,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             const koreanWasQueued = maybeAutoSpeakKorean(card);
             if (!koreanWasQueued && !isKoreanAutoplay && isReversed && !isAutoplay) {
-                speakText(card.en, 'en-US', 1.0);
+                scheduleDeferredEnglish(card, 180);
             }
         }
 
@@ -4475,32 +4475,49 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }, 50);
         }
 
-        /* GitHub Pages용 브라우저 로컬 AI TTS: Kokoro 82M */
+        /* GitHub Pages용 브라우저 로컬 AI TTS: Kokoro 82M
+           성능 패치: 모델 추론을 메인 UI 스레드가 아닌 전용 Web Worker에서 실행함. */
         const KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
         const KOKORO_LIBRARY_URL = 'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js';
+        const KOKORO_VOICE_BASE_URL = `https://huggingface.co/${KOKORO_MODEL_ID}/resolve/main/voices`;
+        const KOKORO_VOICE_CACHE_NAME = 'kokoro-ai-tts-voice-files-v2';
+        const KOKORO_VOICE_PRELOAD_KEY = STORAGE_KEY + '_kokoro_all_voices_ready_v2';
         const TTS_PROFILE_PRESETS = [
+            // 여성 음성: 앞쪽 배치
             { id: 'af_heart', name: 'Heart', gender: '여성', accent: '미국식' },
-            { id: 'am_michael', name: 'Michael', gender: '남성', accent: '미국식' },
-            { id: 'bf_emma', name: 'Emma', gender: '여성', accent: '영국식' },
-            { id: 'bm_george', name: 'George', gender: '남성', accent: '영국식' },
             { id: 'af_bella', name: 'Bella', gender: '여성', accent: '미국식' },
-            { id: 'am_adam', name: 'Adam', gender: '남성', accent: '미국식' },
+            { id: 'bf_emma', name: 'Emma', gender: '여성', accent: '영국식' },
+            { id: 'af_nicole', name: 'Nicole', gender: '여성', accent: '미국식' },
+            { id: 'af_aoede', name: 'Aoede', gender: '여성', accent: '미국식' },
+            { id: 'af_kore', name: 'Kore', gender: '여성', accent: '미국식' },
             { id: 'bf_isabella', name: 'Isabella', gender: '여성', accent: '영국식' },
-            { id: 'bm_fable', name: 'Fable', gender: '남성', accent: '영국식' },
             { id: 'af_nova', name: 'Nova', gender: '여성', accent: '미국식' },
-            { id: 'am_onyx', name: 'Onyx', gender: '남성', accent: '미국식' },
             { id: 'af_sarah', name: 'Sarah', gender: '여성', accent: '미국식' },
+            { id: 'af_sky', name: 'Sky', gender: '여성', accent: '미국식' },
+
+            // 남성 음성: 뒤쪽 배치
+            { id: 'am_michael', name: 'Michael', gender: '남성', accent: '미국식' },
+            { id: 'bm_george', name: 'George', gender: '남성', accent: '영국식' },
+            { id: 'am_adam', name: 'Adam', gender: '남성', accent: '미국식' },
+            { id: 'bm_fable', name: 'Fable', gender: '남성', accent: '영국식' },
+            { id: 'am_onyx', name: 'Onyx', gender: '남성', accent: '미국식' },
             { id: 'bm_lewis', name: 'Lewis', gender: '남성', accent: '영국식' }
         ];
         let ttsProfiles = TTS_PROFILE_PRESETS.map(profile => ({ ...profile }));
-        let kokoroTts = null;
-        let kokoroLoadPromise = null;
+        let kokoroWorker = null;
+        let kokoroWorkerUrl = '';
+        let kokoroWorkerReadyPromise = null;
+        let kokoroWorkerReadyResolve = null;
+        let kokoroWorkerReadyReject = null;
+        let kokoroVoicePreloadPromise = null;
         let kokoroAudio = null;
         let kokoroAudioUrl = '';
         let kokoroRequestId = 0;
         let kokoroLoadingPercent = 0;
+        let deferredEnglishTimer = null;
+        const kokoroPendingRequests = new Map();
         const kokoroAudioCache = new Map();
-        const KOKORO_CACHE_LIMIT = 40;
+        const KOKORO_CACHE_LIMIT = 60;
         const nativeSpeechCancel = ('speechSynthesis' in window && typeof window.speechSynthesis.cancel === 'function')
             ? window.speechSynthesis.cancel.bind(window.speechSynthesis)
             : () => {};
@@ -4522,12 +4539,23 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const profile = getSelectedTtsProfile();
             const position = Math.max(0, ttsProfiles.findIndex(item => item.id === profile.id)) + 1;
             button.textContent = customText || `🎙️ TTS ${position}/${ttsProfiles.length}`;
-            button.title = `AI 음성 변경 · ${position}/${ttsProfiles.length} · ${getProfileDisplayLabel(profile)}`;
+            button.title = `AI 음성 변경 · ${position}/${ttsProfiles.length} · ${getProfileDisplayLabel(profile)} · 음성 합성은 별도 워커에서 실행됨`;
             button.setAttribute('aria-label', button.title);
         }
 
+        function settleAndClearPendingKokoroRequests(value = null) {
+            for (const pending of kokoroPendingRequests.values()) {
+                try { pending.resolve(value); } catch (_) {}
+            }
+            kokoroPendingRequests.clear();
+        }
+
         function stopKokoroPlayback(invalidatePending = false) {
-            if (invalidatePending) kokoroRequestId++;
+            if (invalidatePending) {
+                kokoroRequestId++;
+                settleAndClearPendingKokoroRequests(null);
+                try { kokoroWorker?.postMessage({ type: 'cancel-pending' }); } catch (_) {}
+            }
             if (kokoroAudio) {
                 try { kokoroAudio.pause(); } catch (_) {}
                 try { kokoroAudio.currentTime = 0; } catch (_) {}
@@ -4540,6 +4568,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         }
 
         function cancelAllTts() {
+            if (deferredEnglishTimer) {
+                clearTimeout(deferredEnglishTimer);
+                deferredEnglishTimer = null;
+            }
             nativeSpeechCancel();
             stopKokoroPlayback(true);
         }
@@ -4561,53 +4593,297 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return ttsVoices.find(voice => String(voice.lang || '').toLowerCase().startsWith(languageCode)) || null;
         }
 
-        async function loadKokoroTts() {
-            if (kokoroTts) return kokoroTts;
-            if (kokoroLoadPromise) return kokoroLoadPromise;
+        async function cacheOneKokoroVoiceFile(voiceId, cacheStore) {
+            const url = `${KOKORO_VOICE_BASE_URL}/${encodeURIComponent(voiceId)}.bin`;
+            if ('caches' in window) {
+                const alreadyCached = await caches.match(url);
+                if (alreadyCached) return;
+            }
+            const response = await fetch(url, {
+                mode: 'cors',
+                credentials: 'omit',
+                cache: 'force-cache'
+            });
+            if (!response.ok) throw new Error(`${voiceId} 음성 파일 다운로드 실패 (${response.status})`);
+            if (cacheStore) await cacheStore.put(url, response.clone());
+            else await response.arrayBuffer();
+        }
 
-            kokoroLoadingPercent = 0;
-            updateTtsVoiceButton('⏳ AI 음성 준비');
-            showToast('처음 한 번만 AI 음성 모델을 내려받습니다. 약 90MB이며 이후 브라우저 캐시를 사용합니다.');
-
-            kokoroLoadPromise = (async () => {
-                const module = await import(KOKORO_LIBRARY_URL);
-                if (!module || !module.KokoroTTS) throw new Error('KokoroTTS 모듈을 불러오지 못했습니다.');
-
-                const model = await module.KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
-                    dtype: 'q8',
-                    device: 'wasm',
-                    progress_callback: (progress) => {
-                        if (!progress) return;
-                        let percent = 0;
-                        if (typeof progress.progress === 'number') percent = Math.round(progress.progress);
-                        else if (progress.total && progress.loaded) percent = Math.round((progress.loaded / progress.total) * 100);
-                        if (percent > kokoroLoadingPercent && percent <= 100) {
-                            kokoroLoadingPercent = percent;
-                            updateTtsVoiceButton(`⏳ ${percent}%`);
+        async function preloadAllKokoroVoices() {
+            if (kokoroVoicePreloadPromise) return kokoroVoicePreloadPromise;
+            const voiceIds = [...new Set(ttsProfiles.map(profile => profile.id).filter(Boolean))];
+            kokoroVoicePreloadPromise = (async () => {
+                let cacheStore = null;
+                if ('caches' in window) {
+                    try { cacheStore = await caches.open(KOKORO_VOICE_CACHE_NAME); } catch (_) {}
+                }
+                let completed = 0;
+                let failed = 0;
+                const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+                const workerCount = Math.min(isMobile ? 2 : 4, voiceIds.length);
+                let cursor = 0;
+                updateTtsVoiceButton(`⬇️ 음성 0/${voiceIds.length}`);
+                const workers = Array.from({ length: workerCount }, async () => {
+                    while (cursor < voiceIds.length) {
+                        const index = cursor++;
+                        const voiceId = voiceIds[index];
+                        try {
+                            await cacheOneKokoroVoiceFile(voiceId, cacheStore);
+                        } catch (error) {
+                            failed++;
+                            console.warn('Kokoro voice preload failed:', voiceId, error);
+                        } finally {
+                            completed++;
+                            updateTtsVoiceButton(`⬇️ 음성 ${completed}/${voiceIds.length}`);
                         }
                     }
                 });
-                kokoroTts = model;
+                await Promise.all(workers);
+                safeStorageSet(KOKORO_VOICE_PRELOAD_KEY, failed ? 'partial' : '1');
+                if (!failed && navigator.storage && typeof navigator.storage.persist === 'function') {
+                    try { await navigator.storage.persist(); } catch (_) {}
+                }
                 updateTtsVoiceButton();
-                showToast('AI 음성 준비 완료됨. 다음부터는 캐시되어 더 빠르게 열림.');
-                return model;
             })().catch((error) => {
-                console.error('Kokoro TTS load failed:', error);
-                kokoroLoadPromise = null;
+                console.error('Kokoro voice preload failed:', error);
+                kokoroVoicePreloadPromise = null;
                 updateTtsVoiceButton();
-                throw error;
+            });
+            return kokoroVoicePreloadPromise;
+        }
+
+        function getPreferredKokoroDevice() {
+            const hasWebGpu = !!(navigator && navigator.gpu);
+            return hasWebGpu ? 'webgpu' : 'wasm';
+        }
+
+        function buildKokoroWorkerSource() {
+            const libraryUrl = JSON.stringify(KOKORO_LIBRARY_URL);
+            const modelId = JSON.stringify(KOKORO_MODEL_ID);
+            return `
+                const LIBRARY_URL = ${libraryUrl};
+                const MODEL_ID = ${modelId};
+                let tts = null;
+                let loadPromise = null;
+                let preferredDevice = 'wasm';
+                let pendingTask = null;
+                let isGenerating = false;
+                let debounceTimer = null;
+
+                function post(type, payload = {}) { self.postMessage({ type, ...payload }); }
+
+                async function createModel(device) {
+                    const module = await import(LIBRARY_URL);
+                    if (!module || !module.KokoroTTS) throw new Error('KokoroTTS module unavailable');
+                    return module.KokoroTTS.from_pretrained(MODEL_ID, {
+                        dtype: 'q8',
+                        device,
+                        progress_callback: (progress) => {
+                            if (!progress) return;
+                            let percent = 0;
+                            if (typeof progress.progress === 'number') percent = Math.round(progress.progress);
+                            else if (progress.total && progress.loaded) percent = Math.round((progress.loaded / progress.total) * 100);
+                            if (percent > 0 && percent <= 100) post('progress', { percent });
+                        }
+                    });
+                }
+
+                async function ensureModel() {
+                    if (tts) return tts;
+                    if (loadPromise) return loadPromise;
+                    loadPromise = (async () => {
+                        const attempts = preferredDevice === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+                        let lastError = null;
+                        for (const device of attempts) {
+                            try {
+                                const model = await createModel(device);
+                                tts = model;
+                                post('ready', { device });
+                                return model;
+                            } catch (error) {
+                                lastError = error;
+                                post('device-failed', { device, message: String(error && error.message || error) });
+                            }
+                        }
+                        throw lastError || new Error('Kokoro model loading failed');
+                    })().catch((error) => {
+                        loadPromise = null;
+                        post('fatal', { message: String(error && error.message || error) });
+                        throw error;
+                    });
+                    return loadPromise;
+                }
+
+                async function pump() {
+                    if (isGenerating) return;
+                    isGenerating = true;
+                    try {
+                        while (pendingTask) {
+                            const task = pendingTask;
+                            pendingTask = null;
+                            try {
+                                const model = await ensureModel();
+                                const rawAudio = await model.generate(task.text, {
+                                    voice: task.voice,
+                                    speed: task.speed
+                                });
+                                const blob = rawAudio.toBlob();
+                                post('result', { requestId: task.requestId, blob });
+                            } catch (error) {
+                                post('generate-error', {
+                                    requestId: task.requestId,
+                                    message: String(error && error.message || error)
+                                });
+                            }
+                        }
+                    } finally {
+                        isGenerating = false;
+                    }
+                }
+
+                self.onmessage = (event) => {
+                    const data = event.data || {};
+                    if (data.type === 'init') {
+                        preferredDevice = data.device || 'wasm';
+                        ensureModel().catch(() => {});
+                        return;
+                    }
+                    if (data.type === 'cancel-pending') {
+                        pendingTask = null;
+                        if (debounceTimer) clearTimeout(debounceTimer);
+                        debounceTimer = null;
+                        return;
+                    }
+                    if (data.type === 'generate') {
+                        pendingTask = data;
+                        if (debounceTimer) clearTimeout(debounceTimer);
+                        debounceTimer = setTimeout(() => {
+                            debounceTimer = null;
+                            pump();
+                        }, 24);
+                    }
+                };
+            `;
+        }
+
+        function destroyKokoroWorker() {
+            settleAndClearPendingKokoroRequests(null);
+            if (kokoroWorker) {
+                try { kokoroWorker.terminate(); } catch (_) {}
+                kokoroWorker = null;
+            }
+            if (kokoroWorkerUrl) {
+                try { URL.revokeObjectURL(kokoroWorkerUrl); } catch (_) {}
+                kokoroWorkerUrl = '';
+            }
+            kokoroWorkerReadyPromise = null;
+            kokoroWorkerReadyResolve = null;
+            kokoroWorkerReadyReject = null;
+        }
+
+        function ensureKokoroWorker() {
+            if (kokoroWorker && kokoroWorkerReadyPromise) return kokoroWorkerReadyPromise;
+            if (typeof Worker !== 'function') return Promise.reject(new Error('Web Worker를 지원하지 않는 브라우저입니다.'));
+
+            const source = buildKokoroWorkerSource();
+            kokoroWorkerUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+            kokoroWorker = new Worker(kokoroWorkerUrl, { type: 'module', name: 'kokoro-tts-worker' });
+            kokoroWorkerReadyPromise = new Promise((resolve, reject) => {
+                kokoroWorkerReadyResolve = resolve;
+                kokoroWorkerReadyReject = reject;
             });
 
-            return kokoroLoadPromise;
+            kokoroWorker.onmessage = (event) => {
+                const data = event.data || {};
+                if (data.type === 'progress') {
+                    const percent = Number(data.percent) || 0;
+                    if (percent > kokoroLoadingPercent) {
+                        kokoroLoadingPercent = percent;
+                        updateTtsVoiceButton(`⏳ ${percent}%`);
+                    }
+                    return;
+                }
+                if (data.type === 'ready') {
+                    updateTtsVoiceButton();
+                    kokoroWorkerReadyResolve?.(data.device || 'wasm');
+                    kokoroWorkerReadyResolve = null;
+                    kokoroWorkerReadyReject = null;
+                    // 음성 파일 다운로드는 모델 준비/재생을 막지 않고 뒤에서 진행함.
+                    setTimeout(() => { preloadAllKokoroVoices(); }, 0);
+                    return;
+                }
+                if (data.type === 'result') {
+                    const pending = kokoroPendingRequests.get(data.requestId);
+                    if (!pending) return;
+                    kokoroPendingRequests.delete(data.requestId);
+                    pending.resolve(data.blob || null);
+                    return;
+                }
+                if (data.type === 'generate-error') {
+                    const pending = kokoroPendingRequests.get(data.requestId);
+                    if (!pending) return;
+                    kokoroPendingRequests.delete(data.requestId);
+                    pending.reject(new Error(data.message || 'AI 음성 생성 실패'));
+                    return;
+                }
+                if (data.type === 'fatal') {
+                    const error = new Error(data.message || 'AI 음성 모델 로드 실패');
+                    kokoroWorkerReadyReject?.(error);
+                    kokoroWorkerReadyResolve = null;
+                    kokoroWorkerReadyReject = null;
+                    settleAndClearPendingKokoroRequests(null);
+                }
+            };
+
+            kokoroWorker.onerror = (event) => {
+                const error = new Error(event?.message || 'AI 음성 워커 오류');
+                kokoroWorkerReadyReject?.(error);
+                settleAndClearPendingKokoroRequests(null);
+                destroyKokoroWorker();
+            };
+
+            kokoroLoadingPercent = 0;
+            updateTtsVoiceButton('⏳ AI 음성 준비');
+            kokoroWorker.postMessage({ type: 'init', device: getPreferredKokoroDevice() });
+            return kokoroWorkerReadyPromise;
+        }
+
+        async function loadKokoroTts() {
+            return ensureKokoroWorker();
         }
 
         function rememberKokoroAudio(key, blob) {
+            if (!blob) return;
             if (kokoroAudioCache.has(key)) kokoroAudioCache.delete(key);
             kokoroAudioCache.set(key, blob);
             while (kokoroAudioCache.size > KOKORO_CACHE_LIMIT) {
                 const oldestKey = kokoroAudioCache.keys().next().value;
                 kokoroAudioCache.delete(oldestKey);
             }
+        }
+
+        async function requestKokoroBlob(text, profile, speed, requestId) {
+            await ensureKokoroWorker();
+            if (requestId !== kokoroRequestId) return null;
+
+            // 빠르게 카드를 넘긴 경우 아직 시작하지 않은 지난 요청은 즉시 해제함.
+            for (const [id, pending] of kokoroPendingRequests.entries()) {
+                if (id !== requestId) {
+                    kokoroPendingRequests.delete(id);
+                    try { pending.resolve(null); } catch (_) {}
+                }
+            }
+
+            return new Promise((resolve, reject) => {
+                kokoroPendingRequests.set(requestId, { resolve, reject });
+                kokoroWorker.postMessage({
+                    type: 'generate',
+                    requestId,
+                    text,
+                    voice: profile.id,
+                    speed
+                });
+            });
         }
 
         async function playKokoroText(text, speed = 1.0) {
@@ -4624,15 +4900,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             try {
                 let blob = kokoroAudioCache.get(cacheKey) || null;
                 if (!blob) {
-                    const tts = await loadKokoroTts();
-                    if (requestId !== kokoroRequestId) return;
-                    showToast(`${profile.name} 음성 생성 중...`);
-                    const rawAudio = await tts.generate(cleanText, {
-                        voice: profile.id,
-                        speed: normalizedSpeed
-                    });
-                    if (requestId !== kokoroRequestId) return;
-                    blob = rawAudio.toBlob();
+                    blob = await requestKokoroBlob(cleanText, profile, normalizedSpeed, requestId);
+                    if (!blob || requestId !== kokoroRequestId) return;
                     rememberKokoroAudio(cacheKey, blob);
                 }
 
@@ -4656,9 +4925,22 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             } catch (error) {
                 if (requestId !== kokoroRequestId) return;
                 console.error('Kokoro TTS playback failed:', error);
-                showToast('AI 음성 로드에 실패하여 브라우저 기본 영어 음성으로 재생함. 인터넷 연결을 확인해 주세요.');
+                showToast('AI 음성을 사용할 수 없어 브라우저 기본 영어 음성으로 재생함.');
                 speakBrowserText(cleanText, 'en-US', normalizedSpeed);
             }
+        }
+
+        function scheduleDeferredEnglish(card, delay = 160) {
+            if (!card || !card.en) return;
+            if (deferredEnglishTimer) clearTimeout(deferredEnglishTimer);
+            const key = cardStableKey(card);
+            deferredEnglishTimer = setTimeout(() => {
+                deferredEnglishTimer = null;
+                const visibleCard = currentList[currentIndex];
+                if (!visibleCard || cardStableKey(visibleCard) !== key) return;
+                if (!isReversed || isAutoplay || isKoreanAutoplay) return;
+                speakText(visibleCard.en, 'en-US', 1.0);
+            }, Math.max(100, Number(delay) || 160));
         }
 
         function speakBrowserText(text, lang = 'ko-KR', speed = 1.0) {
@@ -4726,6 +5008,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }, 90);
             return true;
         }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) cancelAllTts();
+        });
 
         function handleFlip() {
             if(currentList.length === 0 || isEditing) return;
