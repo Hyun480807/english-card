@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
-    <meta name="tts-build-version" content="2026-08-01-browser-native-tts-v8-mobile-fast-start">
+    <meta name="tts-build-version" content="2026-08-01-browser-native-tts-v11-eight-female-first">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>통합 핵심 영어 문장</title>
@@ -5382,7 +5382,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         /* 기본 TTS 모드
            영어와 한국어 모두 브라우저/운영체제의 speechSynthesis 음성을 사용한다.
            아래 함수들은 위의 Kokoro 호환 함수를 덮어써서 AI 모델 다운로드와 생성 지연을 없앤다. */
-        const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_voice_v1';
+        const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_voice_v2_eight';
         let nativeEnglishVoices = [];
         let selectedNativeTtsVoiceId = safeStorageGet(NATIVE_TTS_VOICE_KEY) || '';
         let nativeTtsActiveUtterance = null;
@@ -5441,6 +5441,18 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return String(lang || '').toLowerCase().replace('_', '-');
         }
 
+        function getNativeEnglishVoicePriority(voice) {
+            const name = String(voice?.name || '').toLowerCase();
+            const femaleName = /female|woman|samantha|victoria|karen|moira|tessa|serena|susan|zira|aria|jenny|sonia|emma|ava|allison|fiona|kate|olivia|joanna|kimberly|kendra|salli|amy|natasha|michelle|sarah|sara|jane|hazel|libby|maisie|molly|nora|ivy|linda|mary|helen|catherine|cortana|google us english/.test(name);
+            const maleName = /\bmale\b|\bman\b|daniel|alex|fred|tom|david|mark|george|james|ryan|guy|christopher|eric|brian|aaron|arthur|oliver|matthew|stephen|rishi|john|michael|william|andrew|benjamin/.test(name);
+            let score = femaleName ? 3000 : (maleName ? 0 : 1500);
+            if (voice?.localService === true) score += 400;
+            if (voice?.default) score += 120;
+            if (normalizeTtsLanguage(voice?.lang) === 'en-us') score += 60;
+            if (/natural|enhanced|premium/.test(name)) score += 30;
+            return score;
+        }
+
         function getSelectedNativeEnglishVoice() {
             return nativeEnglishVoices.find(voice => getNativeTtsVoiceId(voice) === selectedNativeTtsVoiceId)
                 || nativeEnglishVoices[0]
@@ -5467,11 +5479,14 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             button.disabled = false;
             const voice = getSelectedNativeEnglishVoice();
             const position = voice ? nativeEnglishVoices.indexOf(voice) + 1 : 0;
+            const isMobile = isMobileNativeTtsDevice();
             button.textContent = customText || (voice
                 ? `🎙️ 기본 ${position}/${nativeEnglishVoices.length}`
                 : '🎙️ 기본 TTS');
             button.title = voice
-                ? `영어 기본 음성 변경 · ${position}/${nativeEnglishVoices.length} · ${voice.name} · ${voice.lang}`
+                ? (isMobile
+                    ? `모바일 영어 기본 음성 변경 · ${position}/${nativeEnglishVoices.length} · ${voice.name} · ${voice.lang}`
+                    : `영어 기본 음성 변경 · ${position}/${nativeEnglishVoices.length} · ${voice.name} · ${voice.lang}`)
                 : '영어 기본 음성을 불러오는 중입니다.';
             button.setAttribute('aria-label', button.title);
         }
@@ -5483,27 +5498,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             const allEnglishVoices = ttsVoices
                 .filter(voice => normalizeTtsLanguage(voice.lang).startsWith('en'));
-            const localEnglishVoices = allEnglishVoices.filter(voice => voice.localService === true);
-            nativeEnglishVoices = (isMobileNativeTtsDevice() && localEnglishVoices.length
-                ? localEnglishVoices
-                : allEnglishVoices)
-                .sort((a, b) => {
-                    const localDifference = Number(b.localService === true) - Number(a.localService === true);
-                    if (localDifference) return localDifference;
-                    const usDifference = Number(normalizeTtsLanguage(b.lang) === 'en-us')
-                        - Number(normalizeTtsLanguage(a.lang) === 'en-us');
-                    if (usDifference) return usDifference;
-                    return String(a.name || '').localeCompare(String(b.name || ''), 'en');
-                });
+            const sortedEnglishVoices = [...allEnglishVoices].sort((a, b) => {
+                const priorityDifference = getNativeEnglishVoicePriority(b) - getNativeEnglishVoicePriority(a);
+                if (priorityDifference) return priorityDifference;
+                return String(a.name || '').localeCompare(String(b.name || ''), 'en');
+            });
+            nativeEnglishVoices = sortedEnglishVoices.slice(0, 8);
 
             if (nativeEnglishVoices.length) {
                 const storedVoiceExists = nativeEnglishVoices.some(
                     voice => getNativeTtsVoiceId(voice) === selectedNativeTtsVoiceId
                 );
                 if (!storedVoiceExists) {
-                    const preferredVoice = nativeEnglishVoices.find(voice =>
-                        voice.default && normalizeTtsLanguage(voice.lang).startsWith('en')
-                    ) || nativeEnglishVoices[0];
+                    const preferredVoice = nativeEnglishVoices[0];
                     selectedNativeTtsVoiceId = getNativeTtsVoiceId(preferredVoice);
                     safeStorageSet(NATIVE_TTS_VOICE_KEY, selectedNativeTtsVoiceId);
                 }
