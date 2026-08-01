@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
-    <meta name="tts-build-version" content="2026-08-01-browser-native-tts-v7">
+    <meta name="tts-build-version" content="2026-08-01-browser-native-tts-v8-mobile-fast-start">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>통합 핵심 영어 문장</title>
@@ -200,6 +200,11 @@
             #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-text-value { display: none; }
             #list-container > [data-list-row-key].list-row-hide-en [data-list-text-language="en"] .list-hidden-placeholder,
             #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-hidden-placeholder { display: inline; }
+            #list-container > [data-list-row-key] {
+                content-visibility: auto;
+                contain: layout style paint;
+                contain-intrinsic-size: auto 72px;
+            }
         }
         body.dark #list-modal { background-color: rgba(15, 23, 42, 0.96) !important; border-color: #334155 !important; }
         body.dark #list-modal .border-slate-200, body.dark #list-modal .border-slate-100 { border-color: #334155 !important; }
@@ -4772,7 +4777,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!('speechSynthesis' in window)) return false;
             const cleanText = String(text || '').trim();
             if (!cleanText) return false;
-            nativeSpeechCancel();
+            const synth = window.speechSynthesis;
+            const requestId = ++nativeTtsRequestSerial;
+            if ((synth.speaking || synth.pending) && nativeTtsActiveUtterance) {
+                nativeSpeechCancel();
+                nativeTtsActiveUtterance = null;
+            }
             const utterance = new SpeechSynthesisUtterance(cleanText);
             const isEnglish = String(lang || '').toLowerCase().startsWith('en');
             const profileIndex = isEnglish ? getSelectedTtsProfileIndex() : 0;
@@ -4786,11 +4796,30 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             utterance.rate = Math.max(0.5, Math.min(1.5, Number(speed) || 1));
             utterance.pitch = 1;
             utterance.volume = 1;
-            if (options.onstart) utterance.onstart = options.onstart;
-            if (options.onend) utterance.onend = options.onend;
-            if (options.onerror) utterance.onerror = options.onerror;
-            try { window.speechSynthesis.resume(); } catch (_) {}
-            window.speechSynthesis.speak(utterance);
+            utterance.onstart = (event) => {
+                if (requestId !== nativeTtsRequestSerial) return;
+                nativeTtsActiveUtterance = utterance;
+                nativeTtsPrimed = true;
+                if (options.onstart) options.onstart(event);
+            };
+            utterance.onend = (event) => {
+                if (requestId === nativeTtsRequestSerial && nativeTtsActiveUtterance === utterance) {
+                    nativeTtsActiveUtterance = null;
+                }
+                if (options.onend) options.onend(event);
+            };
+            utterance.onerror = (event) => {
+                if (requestId === nativeTtsRequestSerial && nativeTtsActiveUtterance === utterance) {
+                    nativeTtsActiveUtterance = null;
+                }
+                if (options.onerror) options.onerror(event);
+            };
+            if (synth.paused) {
+                try { synth.resume(); } catch (_) {}
+            }
+            nativeTtsActiveUtterance = utterance;
+            nativeTtsPrimed = true;
+            synth.speak(utterance);
             return true;
         }
 
@@ -5356,6 +5385,52 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_voice_v1';
         let nativeEnglishVoices = [];
         let selectedNativeTtsVoiceId = safeStorageGet(NATIVE_TTS_VOICE_KEY) || '';
+        let nativeTtsActiveUtterance = null;
+        let nativeTtsRequestSerial = 0;
+        let nativeTtsPrimed = false;
+
+        function isMobileNativeTtsDevice() {
+            const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+            const coarsePointer = typeof window.matchMedia === 'function'
+                && window.matchMedia('(pointer: coarse)').matches;
+            return mobileUserAgent || coarsePointer;
+        }
+
+        function stopNativeTtsQueue() {
+            if (!('speechSynthesis' in window)) return;
+            const synth = window.speechSynthesis;
+            nativeTtsRequestSerial++;
+            nativeTtsActiveUtterance = null;
+            if (!synth.speaking && !synth.pending && !synth.paused) return;
+            nativeSpeechCancel();
+        }
+
+        function primeNativeTtsEngine() {
+            if (nativeTtsPrimed || !isMobileNativeTtsDevice() || !('speechSynthesis' in window)) return;
+            refreshTtsVoices();
+            const synth = window.speechSynthesis;
+            if (synth.speaking || synth.pending) {
+                nativeTtsPrimed = true;
+                return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance('.');
+            const voice = getSelectedNativeEnglishVoice();
+            if (voice) {
+                utterance.voice = voice;
+                utterance.lang = voice.lang || 'en-US';
+            } else {
+                utterance.lang = 'en-US';
+            }
+            utterance.rate = 1.5;
+            utterance.volume = 0;
+            utterance.onend = utterance.onerror = () => {
+                if (nativeTtsActiveUtterance === utterance) nativeTtsActiveUtterance = null;
+            };
+            nativeTtsPrimed = true;
+            nativeTtsActiveUtterance = utterance;
+            synth.speak(utterance);
+        }
 
         function getNativeTtsVoiceId(voice) {
             if (!voice) return '';
@@ -5406,8 +5481,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 ? (window.speechSynthesis.getVoices() || [])
                 : [];
 
-            nativeEnglishVoices = ttsVoices
-                .filter(voice => normalizeTtsLanguage(voice.lang).startsWith('en'))
+            const allEnglishVoices = ttsVoices
+                .filter(voice => normalizeTtsLanguage(voice.lang).startsWith('en'));
+            const localEnglishVoices = allEnglishVoices.filter(voice => voice.localService === true);
+            nativeEnglishVoices = (isMobileNativeTtsDevice() && localEnglishVoices.length
+                ? localEnglishVoices
+                : allEnglishVoices)
                 .sort((a, b) => {
                     const localDifference = Number(b.localService === true) - Number(a.localService === true);
                     if (localDifference) return localDifference;
@@ -5458,7 +5537,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 clearTimeout(deferredEnglishTimer);
                 deferredEnglishTimer = null;
             }
-            nativeSpeechCancel();
+            stopNativeTtsQueue();
         }
 
         function cycleTtsVoice() {
@@ -5487,6 +5566,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if ('speechSynthesis' in window && typeof window.speechSynthesis.addEventListener === 'function') {
                 window.speechSynthesis.addEventListener('voiceschanged', refreshTtsVoices);
             }
+            document.addEventListener('pointerdown', primeNativeTtsEngine, { capture: true, passive: true, once: true });
+            document.addEventListener('touchstart', primeNativeTtsEngine, { capture: true, passive: true, once: true });
             setTimeout(refreshTtsVoices, 150);
             setTimeout(refreshTtsVoices, 800);
         }
@@ -5750,6 +5831,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!positionState) return;
             safeStorageSet(POSITION_KEY, JSON.stringify(positionState));
             queueSupabaseSave('position');
+        }
+
+        let listPositionSaveTimer = 0;
+        function scheduleListPositionSave(delayMs = 100) {
+            if (listPositionSaveTimer) clearTimeout(listPositionSaveTimer);
+            listPositionSaveTimer = setTimeout(() => {
+                listPositionSaveTimer = 0;
+                saveCurrentPosition();
+            }, Math.max(0, Number(delayMs) || 0));
         }
 
         function restoreLastPosition() {
@@ -6602,6 +6692,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         let mobileListVisibilityJobId = 0;
         let mobileListVisibilityScrollFrame = 0;
+        let mobileListRowsCache = [];
+        let mobileListRowsCacheContainer = null;
 
         function isMobileListViewport() {
             return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches;
@@ -6611,6 +6703,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!row || !row.dataset.listRowKey) return;
             row.classList.toggle('list-row-hide-en', listHideEnglish && !isListEditMode);
             row.classList.toggle('list-row-hide-ko', listHideKorean && !isListEditMode);
+        }
+
+        function getMobileListRows(container) {
+            if (mobileListRowsCacheContainer === container && mobileListRowsCache.length) {
+                return mobileListRowsCache;
+            }
+            mobileListRowsCacheContainer = container;
+            mobileListRowsCache = Array.from(container.children).filter(row => row.dataset.listRowKey);
+            return mobileListRowsCache;
         }
 
         function getMobileVisibleListRange(container, rows) {
@@ -6639,7 +6740,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function refreshMobileVisibleListRows(container, rows = null) {
             if (!isMobileListViewport() || !container) return;
-            const listRows = rows || Array.from(container.children).filter(row => row.dataset.listRowKey);
+            const listRows = rows || getMobileListRows(container);
             const range = getMobileVisibleListRange(container, listRows);
             for (let index = range.start; index <= range.end; index++) {
                 updateOneListRowVisibility(listRows[index]);
@@ -6647,32 +6748,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         }
 
         function scheduleMobileListVisibility(container) {
-            const rows = Array.from(container.children).filter(row => row.dataset.listRowKey);
-            const jobId = ++mobileListVisibilityJobId;
+            mobileListVisibilityJobId++;
+            const rows = getMobileListRows(container);
             refreshMobileVisibleListRows(container, rows);
-
-            let cursor = 0;
-            const processChunk = (deadline = null) => {
-                if (jobId !== mobileListVisibilityJobId || !isMobileListViewport()) return;
-                let processed = 0;
-                while (cursor < rows.length && processed < 36) {
-                    updateOneListRowVisibility(rows[cursor++]);
-                    processed++;
-                    if (deadline && !deadline.didTimeout && deadline.timeRemaining() < 2) break;
-                }
-                if (cursor >= rows.length) return;
-                if (typeof window.requestIdleCallback === 'function') {
-                    window.requestIdleCallback(processChunk, { timeout: 60 });
-                } else {
-                    requestAnimationFrame(() => processChunk());
-                }
-            };
-
-            if (typeof window.requestIdleCallback === 'function') {
-                window.requestIdleCallback(processChunk, { timeout: 40 });
-            } else {
-                requestAnimationFrame(() => processChunk());
-            }
         }
 
         function ensureMobileListVisibilityScroll(container) {
@@ -6693,12 +6771,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!container) return;
 
             if (options.clearReveals) {
+                const hadRevealedRows = listRowRevealSet.size > 0;
                 listRowRevealSet.clear();
-                container.querySelectorAll('[data-list-row-revealed="true"]').forEach(row => {
-                    row.removeAttribute('data-list-row-revealed');
-                    const button = row.querySelector('.list-study-toggle-btn');
-                    if (button) button.textContent = getUiButtonLabel('sentence', '문장');
-                });
+                if (hadRevealedRows) {
+                    container.querySelectorAll('[data-list-row-revealed="true"]').forEach(row => {
+                        row.removeAttribute('data-list-row-revealed');
+                        const button = row.querySelector('.list-study-toggle-btn');
+                        if (button) button.textContent = getUiButtonLabel('sentence', '문장');
+                    });
+                }
             }
 
             ensureMobileListVisibilityScroll(container);
@@ -6722,7 +6803,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
             applyFastListVisibility({ clearReveals: true });
             updateListHideButtons();
-            saveCurrentPosition();
+            scheduleListPositionSave(100);
         }
 
         function getCurrentListScopeKey() {
@@ -6837,6 +6918,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const container = document.getElementById('list-container');
             mobileListVisibilityJobId++;
             ensureMobileListVisibilityScroll(container);
+            mobileListRowsCacheContainer = container;
+            mobileListRowsCache = [];
             if (isMobileListViewport()) {
                 container.classList.remove('list-hide-en', 'list-hide-ko');
             } else {
@@ -6866,6 +6949,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 div.dataset.listRowKey = rowKey;
                 div.dataset.listRowIndex = String(idx);
                 div.className = `p-3 bg-white rounded-xl shadow-sm border border-slate-100 hover:border-indigo-300 transition-all flex items-center justify-between gap-2 ${isListEditMode ? 'list-edit-row' : ''}`;
+                mobileListRowsCache.push(div);
                 if (isMobileListViewport()) updateOneListRowVisibility(div);
 
                 if (isListEditMode) {
@@ -7400,7 +7484,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (isListEditMode) { e.preventDefault(); return; }
             closeListModal();
         });
-        document.getElementById('list-container').addEventListener('scroll', () => saveCurrentPosition(), { passive: true });
+        document.getElementById('list-container').addEventListener('scroll', () => scheduleListPositionSave(160), { passive: true });
         document.getElementById('list-container').addEventListener('dragover', (event) => {
             if (!listDragState) return;
             event.preventDefault();
