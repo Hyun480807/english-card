@@ -188,6 +188,13 @@
         .list-action-group { flex-wrap: wrap; max-width: 10.5rem; }
         .list-hidden-placeholder { color: #94a3b8; font-weight: 700; letter-spacing: 0.02em; }
         body.dark .list-hidden-placeholder { color: #64748b; }
+        #list-container .list-hidden-placeholder { display: none; }
+        #list-container.list-hide-en [data-list-text-language="en"] .list-text-value,
+        #list-container.list-hide-ko [data-list-text-language="ko"] .list-text-value { display: none; }
+        #list-container.list-hide-en [data-list-text-language="en"] .list-hidden-placeholder,
+        #list-container.list-hide-ko [data-list-text-language="ko"] .list-hidden-placeholder { display: inline; }
+        #list-container [data-list-row-revealed="true"] .list-text-value { display: inline !important; }
+        #list-container [data-list-row-revealed="true"] .list-hidden-placeholder { display: none !important; }
         body.dark #list-modal { background-color: rgba(15, 23, 42, 0.96) !important; border-color: #334155 !important; }
         body.dark #list-modal .border-slate-200, body.dark #list-modal .border-slate-100 { border-color: #334155 !important; }
         body.dark #list-modal .bg-white { background-color: #111827 !important; }
@@ -6530,9 +6537,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return String(card.cardId || (card.originalIdx ?? cardIdentity(card)));
         }
 
-        function makeListTextLine({ className, number, text, hidden, placeholder }) {
+        function makeListTextLine({ className, number, text, placeholder, language }) {
             const line = document.createElement('p');
             line.className = className;
+            line.dataset.listTextLanguage = language || '';
 
             if (number) {
                 const indexSpan = document.createElement('span');
@@ -6541,14 +6549,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 line.appendChild(indexSpan);
             }
 
-            if (hidden) {
-                const hiddenSpan = document.createElement('span');
-                hiddenSpan.className = 'list-hidden-placeholder';
-                hiddenSpan.textContent = placeholder;
-                line.appendChild(hiddenSpan);
-            } else {
-                line.appendChild(document.createTextNode(text || ''));
-            }
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'list-text-value';
+            valueSpan.textContent = text || '';
+            line.appendChild(valueSpan);
+
+            const hiddenSpan = document.createElement('span');
+            hiddenSpan.className = 'list-hidden-placeholder';
+            hiddenSpan.textContent = placeholder;
+            line.appendChild(hiddenSpan);
 
             return line;
         }
@@ -6585,6 +6594,23 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
         }
 
+        function applyFastListVisibility(options = {}) {
+            const container = document.getElementById('list-container');
+            if (!container) return;
+
+            if (options.clearReveals) {
+                listRowRevealSet.clear();
+                container.querySelectorAll('[data-list-row-revealed="true"]').forEach(row => {
+                    row.removeAttribute('data-list-row-revealed');
+                    const button = row.querySelector('.list-study-toggle-btn');
+                    if (button) button.textContent = getUiButtonLabel('sentence', '문장');
+                });
+            }
+
+            container.classList.toggle('list-hide-en', listHideEnglish && !isListEditMode);
+            container.classList.toggle('list-hide-ko', listHideKorean && !isListEditMode);
+        }
+
         function toggleListGlobalHide(type) {
             if (type === 'en') {
                 listHideEnglish = !listHideEnglish;
@@ -6593,8 +6619,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 listHideKorean = !listHideKorean;
                 showToast(listHideKorean ? '전체목록 한글 숨김' : '전체목록 한글 표시');
             }
-            listRowRevealSet.clear();
-            renderListModal();
+            applyFastListVisibility({ clearReveals: true });
+            updateListHideButtons();
             saveCurrentPosition();
         }
 
@@ -6708,6 +6734,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             renderListEditPanel();
             renderCategoryButtons();
             const container = document.getElementById('list-container');
+            applyFastListVisibility();
             const baseList = isListBookmarkMode ? getBookmarkedCards() : getCategoryCards(activeListCategory);
             const list = isListEditMode ? baseList : applyListRandomOrder(baseList);
             const subtitle = document.getElementById('list-subtitle');
@@ -6767,9 +6794,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 }
 
                 const isRowRevealed = listRowRevealSet.has(rowKey);
-                const koHidden = listHideKorean && !isRowRevealed;
-                const enHidden = listHideEnglish && !isRowRevealed;
                 const hasHiddenTarget = listHideKorean || listHideEnglish;
+                if (isRowRevealed) div.dataset.listRowRevealed = 'true';
 
                 const textBox = document.createElement('div');
                 textBox.className = 'flex-1 min-w-0 cursor-pointer';
@@ -6777,14 +6803,14 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     className: 'text-sm font-bold text-slate-800 truncate',
                     number: idx + 1,
                     text: card.ko,
-                    hidden: koHidden,
-                    placeholder: '•••••• 한글 숨김'
+                    placeholder: '•••••• 한글 숨김',
+                    language: 'ko'
                 }));
                 textBox.appendChild(makeListTextLine({
                     className: 'text-xs text-slate-500 truncate mt-1',
                     text: card.en,
-                    hidden: enHidden,
-                    placeholder: '•••••• 영어 숨김'
+                    placeholder: '•••••• 영어 숨김',
+                    language: 'en'
                 }));
                 const categoryLine = document.createElement('p');
                 categoryLine.className = 'text-[10px] text-slate-400 truncate mt-1';
@@ -6833,13 +6859,17 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 sentenceBtn.title = hasHiddenTarget ? '숨긴 한글/영어를 이 문장만 보기 또는 다시 숨기기' : '먼저 상단 영어/한글 버튼을 눌러 사용';
                 sentenceBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    if (!hasHiddenTarget) {
+                    const hasHiddenTargetNow = listHideKorean || listHideEnglish;
+                    if (!hasHiddenTargetNow) {
                         showToast('먼저 영어/한글 버튼을 눌러주세요.');
                         return;
                     }
-                    if (listRowRevealSet.has(rowKey)) listRowRevealSet.delete(rowKey);
-                    else listRowRevealSet.add(rowKey);
-                    renderListModal();
+                    const willReveal = !listRowRevealSet.has(rowKey);
+                    if (willReveal) listRowRevealSet.add(rowKey);
+                    else listRowRevealSet.delete(rowKey);
+                    if (willReveal) div.dataset.listRowRevealed = 'true';
+                    else div.removeAttribute('data-list-row-revealed');
+                    sentenceBtn.textContent = willReveal ? getUiButtonLabel('hide', '숨김') : getUiButtonLabel('sentence', '문장');
                 });
                 bottomActionRow.appendChild(sentenceBtn);
 
