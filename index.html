@@ -2365,19 +2365,20 @@ body.dark #next-btn:disabled span {
 <style id="mobile-list-header-text-size-final">
 @media (max-width: 640px) {
     /* + / -를 오른쪽 기능 버튼과 같은 글자 크기와 굵기로 표시 */
-    #list-font-increase-btn,
-    #list-font-decrease-btn {
+    #list-toggle-controls #list-font-increase-btn,
+    #list-toggle-controls #list-font-decrease-btn {
         display: grid !important;
         place-items: center !important;
         overflow: visible !important;
         font-size: 8.75px !important;
         font-weight: 700 !important;
         line-height: 1 !important;
+        text-indent: 0 !important;
     }
-    #list-font-increase-btn::before,
-    #list-font-increase-btn::after,
-    #list-font-decrease-btn::before,
-    #list-font-decrease-btn::after {
+    #list-toggle-controls #list-font-increase-btn::before,
+    #list-toggle-controls #list-font-increase-btn::after,
+    #list-toggle-controls #list-font-decrease-btn::before,
+    #list-toggle-controls #list-font-decrease-btn::after {
         content: none !important;
         display: none !important;
     }
