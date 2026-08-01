@@ -195,6 +195,12 @@
         #list-container.list-hide-ko [data-list-text-language="ko"] .list-hidden-placeholder { display: inline; }
         #list-container [data-list-row-revealed="true"] .list-text-value { display: inline !important; }
         #list-container [data-list-row-revealed="true"] .list-hidden-placeholder { display: none !important; }
+        @media (max-width: 640px) {
+            #list-container > [data-list-row-key].list-row-hide-en [data-list-text-language="en"] .list-text-value,
+            #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-text-value { display: none; }
+            #list-container > [data-list-row-key].list-row-hide-en [data-list-text-language="en"] .list-hidden-placeholder,
+            #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-hidden-placeholder { display: inline; }
+        }
         body.dark #list-modal { background-color: rgba(15, 23, 42, 0.96) !important; border-color: #334155 !important; }
         body.dark #list-modal .border-slate-200, body.dark #list-modal .border-slate-100 { border-color: #334155 !important; }
         body.dark #list-modal .bg-white { background-color: #111827 !important; }
@@ -6594,6 +6600,94 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
         }
 
+        let mobileListVisibilityJobId = 0;
+        let mobileListVisibilityScrollFrame = 0;
+
+        function isMobileListViewport() {
+            return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches;
+        }
+
+        function updateOneListRowVisibility(row) {
+            if (!row || !row.dataset.listRowKey) return;
+            row.classList.toggle('list-row-hide-en', listHideEnglish && !isListEditMode);
+            row.classList.toggle('list-row-hide-ko', listHideKorean && !isListEditMode);
+        }
+
+        function getMobileVisibleListRange(container, rows) {
+            if (!rows.length) return { start: 0, end: -1 };
+            const containerRect = container.getBoundingClientRect();
+            const probeX = Math.min(containerRect.right - 8, containerRect.left + 24);
+            const firstHit = document.elementFromPoint(probeX, containerRect.top + 8)?.closest('[data-list-row-key]');
+            const lastHit = document.elementFromPoint(probeX, containerRect.bottom - 8)?.closest('[data-list-row-key]');
+            let start = firstHit && container.contains(firstHit) ? Number(firstHit.dataset.listRowIndex) : NaN;
+            let end = lastHit && container.contains(lastHit) ? Number(lastHit.dataset.listRowIndex) : NaN;
+
+            if (!Number.isFinite(start)) {
+                const firstHeight = Math.max(1, rows[0].getBoundingClientRect().height + 8);
+                start = Math.floor(container.scrollTop / firstHeight);
+            }
+            if (!Number.isFinite(end)) {
+                const firstHeight = Math.max(1, rows[0].getBoundingClientRect().height + 8);
+                end = start + Math.ceil(container.clientHeight / firstHeight);
+            }
+
+            return {
+                start: Math.max(0, Math.floor(start) - 6),
+                end: Math.min(rows.length - 1, Math.ceil(end) + 6)
+            };
+        }
+
+        function refreshMobileVisibleListRows(container, rows = null) {
+            if (!isMobileListViewport() || !container) return;
+            const listRows = rows || Array.from(container.children).filter(row => row.dataset.listRowKey);
+            const range = getMobileVisibleListRange(container, listRows);
+            for (let index = range.start; index <= range.end; index++) {
+                updateOneListRowVisibility(listRows[index]);
+            }
+        }
+
+        function scheduleMobileListVisibility(container) {
+            const rows = Array.from(container.children).filter(row => row.dataset.listRowKey);
+            const jobId = ++mobileListVisibilityJobId;
+            refreshMobileVisibleListRows(container, rows);
+
+            let cursor = 0;
+            const processChunk = (deadline = null) => {
+                if (jobId !== mobileListVisibilityJobId || !isMobileListViewport()) return;
+                let processed = 0;
+                while (cursor < rows.length && processed < 36) {
+                    updateOneListRowVisibility(rows[cursor++]);
+                    processed++;
+                    if (deadline && !deadline.didTimeout && deadline.timeRemaining() < 2) break;
+                }
+                if (cursor >= rows.length) return;
+                if (typeof window.requestIdleCallback === 'function') {
+                    window.requestIdleCallback(processChunk, { timeout: 60 });
+                } else {
+                    requestAnimationFrame(() => processChunk());
+                }
+            };
+
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(processChunk, { timeout: 40 });
+            } else {
+                requestAnimationFrame(() => processChunk());
+            }
+        }
+
+        function ensureMobileListVisibilityScroll(container) {
+            if (!container || container.dataset.fastVisibilityScroll === '1') return;
+            container.dataset.fastVisibilityScroll = '1';
+            container.addEventListener('scroll', () => {
+                if (!isMobileListViewport()) return;
+                if (mobileListVisibilityScrollFrame) cancelAnimationFrame(mobileListVisibilityScrollFrame);
+                mobileListVisibilityScrollFrame = requestAnimationFrame(() => {
+                    mobileListVisibilityScrollFrame = 0;
+                    refreshMobileVisibleListRows(container);
+                });
+            }, { passive: true });
+        }
+
         function applyFastListVisibility(options = {}) {
             const container = document.getElementById('list-container');
             if (!container) return;
@@ -6607,8 +6701,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 });
             }
 
-            container.classList.toggle('list-hide-en', listHideEnglish && !isListEditMode);
-            container.classList.toggle('list-hide-ko', listHideKorean && !isListEditMode);
+            ensureMobileListVisibilityScroll(container);
+            if (isMobileListViewport()) {
+                container.classList.remove('list-hide-en', 'list-hide-ko');
+                scheduleMobileListVisibility(container);
+            } else {
+                mobileListVisibilityJobId++;
+                container.classList.toggle('list-hide-en', listHideEnglish && !isListEditMode);
+                container.classList.toggle('list-hide-ko', listHideKorean && !isListEditMode);
+            }
         }
 
         function toggleListGlobalHide(type) {
@@ -6734,7 +6835,14 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             renderListEditPanel();
             renderCategoryButtons();
             const container = document.getElementById('list-container');
-            applyFastListVisibility();
+            mobileListVisibilityJobId++;
+            ensureMobileListVisibilityScroll(container);
+            if (isMobileListViewport()) {
+                container.classList.remove('list-hide-en', 'list-hide-ko');
+            } else {
+                container.classList.toggle('list-hide-en', listHideEnglish && !isListEditMode);
+                container.classList.toggle('list-hide-ko', listHideKorean && !isListEditMode);
+            }
             const baseList = isListBookmarkMode ? getBookmarkedCards() : getCategoryCards(activeListCategory);
             const list = isListEditMode ? baseList : applyListRandomOrder(baseList);
             const subtitle = document.getElementById('list-subtitle');
@@ -6756,7 +6864,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 const rowKey = getListRowKey(card);
                 const div = document.createElement('div');
                 div.dataset.listRowKey = rowKey;
+                div.dataset.listRowIndex = String(idx);
                 div.className = `p-3 bg-white rounded-xl shadow-sm border border-slate-100 hover:border-indigo-300 transition-all flex items-center justify-between gap-2 ${isListEditMode ? 'list-edit-row' : ''}`;
+                if (isMobileListViewport()) updateOneListRowVisibility(div);
 
                 if (isListEditMode) {
                     div.draggable = true;
