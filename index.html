@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
-    <meta name="tts-build-version" content="2026-08-01-browser-native-tts-v11-eight-female-first">
+    <meta name="tts-build-version" content="2026-08-02-browser-native-tts-v12-shared-eight-profiles">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>통합 핵심 영어 문장</title>
@@ -168,13 +168,17 @@
 
         #reverse-btn,
         #autoplay-btn,
-        #shuffle-btn {
+        #shuffle-btn,
+        #korean-autoplay-btn {
             background-color: #f8fafc !important;
+            border-width: 1px !important;
+            border-style: solid !important;
             border-color: #e2e8f0 !important;
         }
         #reverse-btn:hover,
         #autoplay-btn:hover,
-        #shuffle-btn:hover {
+        #shuffle-btn:hover,
+        #korean-autoplay-btn:hover {
             background-color: #f1f5f9 !important;
         }
         #autoplay-btn {
@@ -425,7 +429,8 @@
         #reverse-btn.mode-active,
         #bookmark-filter-btn.mode-active,
         #autoplay-btn.mode-active,
-        #shuffle-btn.mode-active {
+        #shuffle-btn.mode-active,
+        #korean-autoplay-btn.mode-active {
             background-color: #4f46e5 !important;
             border-color: #4338ca !important;
             color: #ffffff !important;
@@ -435,13 +440,15 @@
         #reverse-btn.mode-active:hover,
         #bookmark-filter-btn.mode-active:hover,
         #autoplay-btn.mode-active:hover,
-        #shuffle-btn.mode-active:hover {
+        #shuffle-btn.mode-active:hover,
+        #korean-autoplay-btn.mode-active:hover {
             background-color: #4338ca !important;
         }
         #reverse-btn.mode-active .action-icon,
         #bookmark-filter-btn.mode-active .action-icon,
         #autoplay-btn.mode-active .action-icon,
-        #shuffle-btn.mode-active .action-icon {
+        #shuffle-btn.mode-active .action-icon,
+        #korean-autoplay-btn.mode-active .action-icon {
             opacity: 1 !important;
         }
         #bookmark-filter-btn.mode-active #filter-star-icon {
@@ -494,7 +501,8 @@
         body.dark #reverse-btn:not(.mode-active),
         body.dark #bookmark-filter-btn:not(.mode-active),
         body.dark #autoplay-btn:not(.mode-active),
-        body.dark #shuffle-btn:not(.mode-active) {
+        body.dark #shuffle-btn:not(.mode-active),
+        body.dark #korean-autoplay-btn:not(.mode-active) {
             background-color: #1e293b !important;
             border-color: #334155 !important;
             color: #e2e8f0 !important;
@@ -502,13 +510,15 @@
         body.dark #reverse-btn:not(.mode-active):hover,
         body.dark #bookmark-filter-btn:not(.mode-active):hover,
         body.dark #autoplay-btn:not(.mode-active):hover,
-        body.dark #shuffle-btn:not(.mode-active):hover {
+        body.dark #shuffle-btn:not(.mode-active):hover,
+        body.dark #korean-autoplay-btn:not(.mode-active):hover {
             background-color: #334155 !important;
         }
         body.dark #reverse-btn.mode-active,
         body.dark #bookmark-filter-btn.mode-active,
         body.dark #autoplay-btn.mode-active,
-        body.dark #shuffle-btn.mode-active {
+        body.dark #shuffle-btn.mode-active,
+        body.dark #korean-autoplay-btn.mode-active {
             background-color: #6366f1 !important;
             border-color: #818cf8 !important;
             color: #ffffff !important;
@@ -2833,14 +2843,17 @@ body.dark #next-btn:disabled span {
         background-color: #f1f5f9 !important;
         color: #475569 !important;
     }
+    body.dark .action-toolbar #bookmark-filter-btn,
     body.dark .action-toolbar #reverse-btn,
     body.dark .action-toolbar #shuffle-btn,
     body.dark .action-toolbar #autoplay-btn,
     body.dark .action-toolbar #korean-autoplay-btn,
+    body.dark .action-toolbar #bookmark-filter-btn:hover,
     body.dark .action-toolbar #reverse-btn:hover,
     body.dark .action-toolbar #shuffle-btn:hover,
     body.dark .action-toolbar #autoplay-btn:hover,
     body.dark .action-toolbar #korean-autoplay-btn:hover,
+    body.dark .action-toolbar #bookmark-filter-btn:focus,
     body.dark .action-toolbar #reverse-btn:focus,
     body.dark .action-toolbar #shuffle-btn:focus,
     body.dark .action-toolbar #autoplay-btn:focus,
@@ -2994,6 +3007,153 @@ body.dark #next-btn:disabled span {
     }
 </style>
 
+<style id="action-toolbar-bookmark-border-match-final">
+    .action-toolbar #reverse-btn,
+    .action-toolbar #shuffle-btn,
+    .action-toolbar #autoplay-btn,
+    .action-toolbar #korean-autoplay-btn,
+    .action-toolbar #reverse-btn:hover,
+    .action-toolbar #shuffle-btn:hover,
+    .action-toolbar #autoplay-btn:hover,
+    .action-toolbar #korean-autoplay-btn:hover,
+    .action-toolbar #reverse-btn:focus,
+    .action-toolbar #shuffle-btn:focus,
+    .action-toolbar #autoplay-btn:focus,
+    .action-toolbar #korean-autoplay-btn:focus {
+        border: 1px solid #e2e8f0 !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        border-color: #e2e8f0 !important;
+        box-shadow: none !important;
+    }
+    .action-toolbar #reverse-btn.mode-active,
+    .action-toolbar #shuffle-btn.mode-active,
+    .action-toolbar #autoplay-btn.mode-active,
+    .action-toolbar #korean-autoplay-btn.mode-active {
+        border-color: #4338ca !important;
+    }
+    body.dark .action-toolbar #bookmark-filter-btn,
+    body.dark .action-toolbar #reverse-btn,
+    body.dark .action-toolbar #shuffle-btn,
+    body.dark .action-toolbar #autoplay-btn,
+    body.dark .action-toolbar #korean-autoplay-btn,
+    body.dark .action-toolbar #bookmark-filter-btn:hover,
+    body.dark .action-toolbar #reverse-btn:hover,
+    body.dark .action-toolbar #shuffle-btn:hover,
+    body.dark .action-toolbar #autoplay-btn:hover,
+    body.dark .action-toolbar #korean-autoplay-btn:hover,
+    body.dark .action-toolbar #bookmark-filter-btn:focus,
+    body.dark .action-toolbar #reverse-btn:focus,
+    body.dark .action-toolbar #shuffle-btn:focus,
+    body.dark .action-toolbar #autoplay-btn:focus,
+    body.dark .action-toolbar #korean-autoplay-btn:focus {
+        border: 1px solid #64748b !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        border-color: #64748b !important;
+        box-shadow: none !important;
+    }
+    body.dark .action-toolbar #bookmark-filter-btn.mode-active,
+    body.dark .action-toolbar #reverse-btn.mode-active,
+    body.dark .action-toolbar #shuffle-btn.mode-active,
+    body.dark .action-toolbar #autoplay-btn.mode-active,
+    body.dark .action-toolbar #korean-autoplay-btn.mode-active {
+        border: 1px solid #64748b !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        border-color: #64748b !important;
+    }
+</style>
+
+<style id="card-page-unified-border-final">
+    /* 카드 메인 화면의 모든 상자 테두리를 북마크 버튼과 동일하게 통일 */
+    #app-shell {
+        --card-page-border-color: #e2e8f0;
+        border: 1px solid var(--card-page-border-color) !important;
+    }
+    body.dark #app-shell {
+        --card-page-border-color: #334155;
+        border: 1px solid var(--card-page-border-color) !important;
+    }
+
+    #app-shell :is(
+        #sentence-search-input,
+        #sentence-search-clear,
+        #main-font-increase-btn,
+        #main-font-decrease-btn,
+        #main-delete-sentence-btn,
+        #list-btn,
+        #edit-btn,
+        #darkmode-btn,
+        #download-app-btn,
+        #refresh-page-btn,
+        #add-sentence-btn,
+        #bookmark-filter-btn,
+        #reverse-btn,
+        #shuffle-btn,
+        #autoplay-btn,
+        #korean-autoplay-btn,
+        #bookmark-difficulty-select,
+        #difficulty-btn-front,
+        #difficulty-btn-back,
+        #ko-tts-btn-front,
+        #tts-btn-slow,
+        #tts-btn,
+        #copy-btn,
+        #pattern-start-btn,
+        #pattern-copy-btn,
+        #pattern-ans-btn,
+        #pattern-back-btn,
+        #counter,
+        #first-btn,
+        #skip-prev-btn,
+        #reset-order-btn,
+        #tts-voice-btn,
+        #skip-next-btn,
+        #last-btn
+    ),
+    #app-shell .card-face,
+    #app-shell .sentence-search-results {
+        border: 1px solid var(--card-page-border-color) !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        border-color: var(--card-page-border-color) !important;
+    }
+
+    #app-shell .card-bottom-toolbar {
+        border-top: 1px solid var(--card-page-border-color) !important;
+    }
+    #app-shell .sentence-search-result-row {
+        border-bottom: 1px solid var(--card-page-border-color) !important;
+    }
+    #app-shell .sentence-search-result-row:last-child {
+        border-bottom: 0 !important;
+    }
+    #app-shell .main-menu-inline-editable {
+        min-width: 0.75rem;
+        cursor: text;
+        outline: none;
+        white-space: nowrap;
+    }
+
+    /* 목록 팝업의 겹선은 제거하고 바깥 #app-shell 선 한 겹만 사용 */
+    #app-shell #list-modal {
+        border: 0 solid transparent !important;
+        border-width: 0 !important;
+        border-color: transparent !important;
+        box-shadow: none !important;
+    }
+    #app-shell #list-toggle-controls :is(#list-font-increase-btn, #list-font-decrease-btn),
+    #app-shell #list-toggle-controls :is(#list-font-increase-btn, #list-font-decrease-btn):hover,
+    #app-shell #list-toggle-controls :is(#list-font-increase-btn, #list-font-decrease-btn):focus,
+    #app-shell #list-toggle-controls :is(#list-font-increase-btn, #list-font-decrease-btn):active {
+        border: 0 solid transparent !important;
+        border-width: 0 !important;
+        border-color: transparent !important;
+        box-shadow: none !important;
+    }
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 24.00px; --main-question-size: 20.00px; --main-desc-size: 14.00px; --main-desc-line-height: 1.55; --list-title-size: 18.00px; --list-subtitle-size: 12.00px; --list-category-size: 11.52px; --list-category-count-size: 10.00px; --list-ko-size: 14.00px; --list-en-size: 12.00px; --list-meta-size: 10.00px;">
@@ -3026,29 +3186,29 @@ body.dark #next-btn:disabled span {
         </div>
 
         <div class="top-toolbar flex justify-center items-center gap-1 mb-4">
-            <button id="list-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">📋</span><span class="top-btn-label">목록</span></button>
+            <button id="list-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">📋</span><span id="main-label-list" class="top-btn-label">목록</span></button>
             <button id="edit-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm leading-none"><span class="top-btn-emoji">✏️</span><span class="top-btn-label">수정</span></button>
-            <button id="darkmode-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">🌙</span><span class="top-btn-label">다크</span></button>
-            <button id="download-app-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">💾</span><span class="top-btn-label">다운</span></button>
-            <button id="refresh-page-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">♻️</span><span class="top-btn-label">갱신</span></button>
-            <button id="add-sentence-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-emerald-500 text-white py-2 px-1.5 rounded-lg font-bold hover:bg-emerald-400 transition-colors shadow-sm"><span class="top-btn-emoji">➕</span><span class="top-btn-label">추가</span></button>
+            <button id="darkmode-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">🌙</span><span id="main-label-dark-mode" class="top-btn-label">다크</span></button>
+            <button id="download-app-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">💾</span><span id="main-label-download" class="top-btn-label">다운</span></button>
+            <button id="refresh-page-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-slate-200 text-slate-700 py-2 px-1.5 rounded-lg font-bold hover:bg-slate-300 transition-colors shadow-sm"><span class="top-btn-emoji">♻️</span><span id="main-label-refresh" class="top-btn-label">갱신</span></button>
+            <button id="add-sentence-btn" class="flex items-center gap-0.5 text-[10px] sm:text-xs bg-emerald-500 text-white py-2 px-1.5 rounded-lg font-bold hover:bg-emerald-400 transition-colors shadow-sm"><span class="top-btn-emoji">➕</span><span id="main-label-add" class="top-btn-label">추가</span></button>
         </div>
 
         <div class="grid grid-cols-4 gap-2 mb-4 action-toolbar">
             <button id="bookmark-filter-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size bg-yellow-100" aria-pressed="false">
                 <svg id="filter-star-icon" xmlns="http://www.w3.org/2000/svg" class="action-icon text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.907c.961 0 1.36 1.242.588 1.81l-3.97 2.883a1 1 0 00-.364 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.971-2.883a1 1 0 00-1.18 0l-3.97 2.883c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.364-1.118l-3.97-2.883c-.772-.568-.373-1.81.588-1.81h4.907a1 1 0 00.95-.69l1.519-4.674z"></path></svg>
-                <span class="text-[10px] sm:text-[11px] leading-tight">북마크<span id="bookmark-count" class="block text-[9px] text-slate-500 font-semibold">(166)</span></span>
+                <span class="text-[10px] sm:text-[11px] leading-tight"><span id="main-label-bookmark">북마크</span><span id="bookmark-count" class="block text-[9px] text-slate-500 font-semibold">(166)</span></span>
             </button>
-            <button id="reverse-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false">
-                <span class="action-icon feature-emoji-box feature-emoji-reverse"><svg class="feature-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="feature-icon-bg" x="2" y="2" width="20" height="20" rx="4"/><path class="feature-icon-line" d="M9 9.2h7.4m0 0-2-2m2 2-2 2M16.4 14.8H9m0 0 2 2m-2-2 2-2"/></svg></span><span class="text-[10px] sm:text-[11px]">반전 모드</span>
+            <button id="reverse-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false">
+                <span class="action-icon feature-emoji-box feature-emoji-reverse"><svg class="feature-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="feature-icon-bg" x="2" y="2" width="20" height="20" rx="4"/><path class="feature-icon-line" d="M9 9.2h7.4m0 0-2-2m2 2-2 2M16.4 14.8H9m0 0 2 2m-2-2 2-2"/></svg></span><span id="main-label-reverse" class="text-[10px] sm:text-[11px]">반전 모드</span>
             </button>
-            <button id="shuffle-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false" title="현재 문장 순서 섞기">
+            <button id="shuffle-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false" title="현재 문장 순서 섞기">
                 <span id="shuffle-icon" class="action-icon feature-emoji-box feature-emoji-shuffle"><svg class="feature-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="feature-icon-bg" x="2" y="2" width="20" height="20" rx="4"/><path class="feature-icon-line" d="M9 9.2h1c1.6 0 2.4 5.6 4.2 5.6h2.2M14.4 12.8l2 2-2 2M9 14.8h1c.7 0 1.3-.8 1.8-1.8M13 11c.7-1.2 1.5-1.8 2.4-1.8h1M14.4 7.2l2 2-2 2"/></svg></span><span id="shuffle-btn-text" class="text-[10px] sm:text-[11px]">순서 섞기</span>
             </button>
-            <button id="autoplay-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false">
+            <button id="autoplay-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false">
                 <span id="play-icon" class="action-icon feature-emoji-box feature-emoji-autoplay"><svg class="feature-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="feature-icon-bg" x="2" y="2" width="20" height="20" rx="4"/><path class="feature-icon-play-shape" d="M9 7.2v9.6l7.4-4.8L9 7.2Z"/></svg></span><span id="autoplay-btn-text" class="text-[10px] sm:text-[11px]">자동 재생</span>
             </button>
-            <button id="korean-autoplay-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false" title="카드가 바뀔 때마다 한글 문장 자동 읽기">
+            <button id="korean-autoplay-btn" class="flex flex-col items-center justify-center gap-1.5 py-2.5 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold transition-all button-size" aria-pressed="false" title="카드가 바뀔 때마다 한글 문장 자동 읽기">
                 <span id="korean-autoplay-icon" class="action-icon feature-emoji-box feature-emoji-korean"><svg class="feature-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="feature-icon-bg" x="2" y="2" width="20" height="20" rx="4"/><path class="feature-icon-play-shape" d="M9 7.2v9.6l7.4-4.8L9 7.2Z"/></svg></span><span id="korean-autoplay-btn-text" class="text-[10px] sm:text-[11px]">한글 재생</span>
             </button>
         </div>
@@ -3086,10 +3246,10 @@ body.dark #next-btn:disabled span {
                                 <p id="desc-text" class="text-sm font-medium text-indigo-200 text-center break-keep outline-none transition-all" spellcheck="false" contenteditable="false">포인트: 'Excuse me coming' 덩어리를 먼저 외우면 좋음. 해외 생활에서는 완벽한 문법보다 이 표현을 바로 꺼내는 속도가 더 중요함.</p>
                                 <div class="flex gap-2 mt-1">
                                     <button id="copy-btn" class="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-500/50 hover:bg-indigo-400 rounded-full text-white/90 text-sm font-semibold transition-colors">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg><span>복사</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg><span id="main-label-copy">복사</span>
                                     </button>
                                     <button id="pattern-start-btn" class="flex items-center gap-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-400 rounded-full text-white text-sm font-bold transition-colors shadow-md">
-                                        🤖 실전 응용 퀴즈
+                                        <span aria-hidden="true">🤖</span> <span id="main-label-pattern-start">실전 응용 퀴즈</span>
                                     </button>
                                 </div>
                             </div>
@@ -3100,10 +3260,10 @@ body.dark #next-btn:disabled span {
                                 <p id="pattern-desc-text" class="text-sm font-medium text-indigo-200 text-center break-keep outline-none transition-all hidden" spellcheck="false" contenteditable="false">응용 포인트: 'The train is' 표현을 상황만 바꿔 적용한 문장임. 통째로 소리 내서 반복하면 실제 대화에서 더 빨리 나옴.</p>
                                 <div class="flex gap-2 mt-2">
                                     <button id="pattern-copy-btn" class="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-500/50 hover:bg-indigo-400 rounded-full text-white/90 text-sm font-semibold transition-colors hidden">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg><span>복사</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg><span id="main-label-pattern-copy">복사</span>
                                     </button>
-                                    <button id="pattern-ans-btn" class="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 rounded-full text-white text-sm font-bold transition-colors shadow-md">🎯 정답 확인</button>
-                                    <button id="pattern-back-btn" class="px-4 py-1.5 bg-slate-500/50 hover:bg-slate-500 rounded-full text-white/90 text-sm font-semibold transition-colors">돌아가기</button>
+                                    <button id="pattern-ans-btn" class="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 rounded-full text-white text-sm font-bold transition-colors shadow-md"><span aria-hidden="true">🎯</span> <span id="main-label-pattern-answer">정답 확인</span></button>
+                                    <button id="pattern-back-btn" class="px-4 py-1.5 bg-slate-500/50 hover:bg-slate-500 rounded-full text-white/90 text-sm font-semibold transition-colors"><span id="main-label-pattern-back">돌아가기</span></button>
                                 </div>
                             </div>
                         </div>
@@ -3114,21 +3274,21 @@ body.dark #next-btn:disabled span {
 
         <div class="flex justify-between items-center px-4">
             <button id="prev-btn" class="flex flex-col items-center justify-center p-4 text-gray-500 hover:text-indigo-600 transition-colors disabled:opacity-50 button-tall">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"></path></svg><span class="text-xs font-semibold">이전</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"></path></svg><span id="main-label-previous" class="text-xs font-semibold">이전</span>
             </button>
             <button id="counter" type="button" class="bg-indigo-100 text-indigo-800 font-bold py-3 px-8 rounded-full shadow-md button-tall cursor-default select-none">461 / 931</button>
             <button id="next-btn" class="flex flex-col items-center justify-center p-4 text-gray-500 hover:text-indigo-600 transition-colors disabled:opacity-50 button-tall">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span class="text-xs font-semibold">다음</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span id="main-label-next" class="text-xs font-semibold">다음</span>
             </button>
         </div>
 
         <div class="card-bottom-toolbar flex justify-center gap-2 mt-4 pt-4 border-t border-gray-100">
-            <button id="first-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm">처음</button>
-            <button id="skip-prev-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm">-20</button>
-            <button id="reset-order-btn" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors shadow-sm" title="현재 카드 순서를 기본 순서로 초기화">↩️ 초기화</button>
-            <button id="tts-voice-btn" class="px-3 py-2 bg-sky-50 text-sky-700 rounded-lg text-sm font-bold hover:bg-sky-100 transition-colors shadow-sm" title="TTS 음성 변경" aria-label="TTS 음성 변경">🎙️ TTS 음성</button>
-            <button id="skip-next-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm">+20</button>
-            <button id="last-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm">끝</button>
+            <button id="first-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm"><span id="main-label-first">처음</span></button>
+            <button id="skip-prev-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm"><span id="main-label-skip-previous">-20</span></button>
+            <button id="reset-order-btn" class="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors shadow-sm" title="현재 카드 순서를 기본 순서로 초기화"><span aria-hidden="true">↩️</span> <span id="main-label-reset-order">초기화</span></button>
+            <button id="tts-voice-btn" class="px-3 py-2 bg-sky-50 text-sky-700 rounded-lg text-sm font-bold hover:bg-sky-100 transition-colors shadow-sm" title="TTS 음성 변경" aria-label="TTS 음성 변경"><span aria-hidden="true">🎙️</span> <span id="main-label-tts-voice">기본</span> <span id="tts-voice-status"></span></button>
+            <button id="skip-next-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm"><span id="main-label-skip-next">+20</span></button>
+            <button id="last-btn" class="px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition-colors shadow-sm"><span id="main-label-last">끝</span></button>
         </div>
 
         <div id="list-modal" class="absolute inset-0 z-40 bg-white/95 backdrop-blur-sm rounded-3xl flex flex-col shadow-2xl overflow-hidden border border-slate-200 transition-opacity hidden">
@@ -3234,6 +3394,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 random: '랜덤', reset: '초기화', edit: '수정', done: '완료', english: '영어', korean: '한글',
                 close: '닫기 ✕', sentence: '문장', hide: '숨김', copy: '복사', delete: '삭제',
                 save: '저장', moveUp: '↑', moveDown: '↓'
+            },
+            mainButtons: {
+                list: '목록', darkMode: '다크', download: '다운', refresh: '갱신', add: '추가',
+                bookmark: '북마크', reverse: '반전 모드', shuffle: '순서 섞기', shuffleReset: '기본 순서',
+                autoplay: '자동 재생', autoplayStop: '재생 중지', koreanAutoplay: '한글 재생',
+                copy: '복사', patternStart: '실전 응용 퀴즈', patternCopy: '복사',
+                patternAnswer: '정답 확인', patternBack: '돌아가기', previous: '이전', next: '다음',
+                first: '처음', skipPrevious: '-20', resetOrder: '초기화', ttsVoice: '기본',
+                skipNext: '+20', last: '끝'
             },
             specialCategories: {
                 all: '전체목록', bookmarks: '북마크 보기', grammar: '핵심표 플래시카드'
@@ -3353,6 +3522,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const incomingListTitle = String(incoming.listTitle || base.listTitle).trim() || base.listTitle;
             base.listTitle = incomingListTitle === '전체 문장 목록' ? '전체 목록' : incomingListTitle;
             base.buttons = { ...base.buttons, ...(incoming.buttons || {}) };
+            base.mainButtons = { ...base.mainButtons, ...(incoming.mainButtons || {}) };
             base.specialCategories = { ...base.specialCategories, ...(incoming.specialCategories || {}) };
 
             const incomingCategories = Array.isArray(incoming.categories) ? incoming.categories : [];
@@ -3419,6 +3589,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 });
                 if (categoryMeta.some(item => item.key === selectedValue && item.key !== 'all')) categorySelect.value = selectedValue;
             }
+            applyMainMenuLabels();
         }
 
         function loadUiConfigFromStorage() {
@@ -3434,6 +3605,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function getUiButtonLabel(key, fallback = '') {
             const value = uiConfig && uiConfig.buttons ? uiConfig.buttons[key] : '';
+            return String(value || fallback || '').trim() || fallback;
+        }
+
+        function getMainButtonLabel(key, fallback = '') {
+            const value = uiConfig && uiConfig.mainButtons ? uiConfig.mainButtons[key] : '';
             return String(value || fallback || '').trim() || fallback;
         }
 
@@ -3733,7 +3909,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 isAutoplay = false;
                 clearTimeout(autoplayTimer);
                 const autoplayText = document.getElementById('autoplay-btn-text');
-                if (autoplayText) autoplayText.innerText = '자동 재생';
+                if (autoplayText) autoplayText.innerText = getMainButtonLabel('autoplay', '자동 재생');
             }
             isEditing = false;
             isFilterMode = false;
@@ -4276,7 +4452,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const shuffleText = document.getElementById('shuffle-btn-text');
             const shuffleButton = document.getElementById('shuffle-btn');
             if (shuffleIcon) shuffleIcon.innerHTML = isShuffleActive ? FEATURE_ICON_RESET_SVG : FEATURE_ICON_SHUFFLE_SVG;
-            if (shuffleText) shuffleText.textContent = isShuffleActive ? '기본 순서' : '순서 섞기';
+            if (shuffleText && !shuffleText.isContentEditable) shuffleText.textContent = isShuffleActive
+                ? getMainButtonLabel('shuffleReset', '기본 순서')
+                : getMainButtonLabel('shuffle', '순서 섞기');
             if (shuffleButton) shuffleButton.title = isShuffleActive ? '기본 순서로 되돌리기' : '현재 문장 순서 섞기';
             updateBookmarkDifficultyFilterControls();
         }
@@ -4438,6 +4616,110 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
         }
 
+        function getMainMenuLabelSpecs() {
+            const shuffleActive = document.getElementById('shuffle-btn')?.classList.contains('mode-active');
+            const autoplayActive = document.getElementById('autoplay-btn')?.classList.contains('mode-active');
+            return [
+                ['main-label-list', 'list', '목록'],
+                ['main-label-dark-mode', 'darkMode', '다크'],
+                ['main-label-download', 'download', '다운'],
+                ['main-label-refresh', 'refresh', '갱신'],
+                ['main-label-add', 'add', '추가'],
+                ['main-label-bookmark', 'bookmark', '북마크'],
+                ['main-label-reverse', 'reverse', '반전 모드'],
+                ['shuffle-btn-text', shuffleActive ? 'shuffleReset' : 'shuffle', shuffleActive ? '기본 순서' : '순서 섞기'],
+                ['autoplay-btn-text', autoplayActive ? 'autoplayStop' : 'autoplay', autoplayActive ? '재생 중지' : '자동 재생'],
+                ['korean-autoplay-btn-text', 'koreanAutoplay', '한글 재생'],
+                ['main-label-copy', 'copy', '복사'],
+                ['main-label-pattern-start', 'patternStart', '실전 응용 퀴즈'],
+                ['main-label-pattern-copy', 'patternCopy', '복사'],
+                ['main-label-pattern-answer', 'patternAnswer', '정답 확인'],
+                ['main-label-pattern-back', 'patternBack', '돌아가기'],
+                ['main-label-previous', 'previous', '이전'],
+                ['main-label-next', 'next', '다음'],
+                ['main-label-first', 'first', '처음'],
+                ['main-label-skip-previous', 'skipPrevious', '-20'],
+                ['main-label-reset-order', 'resetOrder', '초기화'],
+                ['main-label-tts-voice', 'ttsVoice', '기본'],
+                ['main-label-skip-next', 'skipNext', '+20'],
+                ['main-label-last', 'last', '끝']
+            ];
+        }
+
+        function applyMainMenuLabels() {
+            getMainMenuLabelSpecs().forEach(([id, key, fallback]) => {
+                const el = document.getElementById(id);
+                if (!el || el.isContentEditable) return;
+                el.textContent = getMainButtonLabel(key, fallback);
+            });
+        }
+
+        function saveMainMenuLabel(el) {
+            if (!el || !uiConfig || !uiConfig.mainButtons) return false;
+            const key = el.dataset.mainMenuKey;
+            const fallback = el.dataset.mainMenuFallback || '';
+            if (!key) return false;
+            const clean = String(el.innerText || '').replace(/\s+/g, ' ').trim();
+            if (!clean) {
+                el.textContent = getMainButtonLabel(key, fallback);
+                return false;
+            }
+            if (uiConfig.mainButtons[key] === clean) return false;
+            uiConfig.mainButtons[key] = clean;
+            el.textContent = clean;
+            persistUiConfig('rename-main-button');
+            return true;
+        }
+
+        function setMainMenuLabelsEditable(enabled) {
+            getMainMenuLabelSpecs().forEach(([id, key, fallback]) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.dataset.mainMenuKey = key;
+                el.dataset.mainMenuFallback = fallback;
+
+                if (enabled) {
+                    const parentButton = el.closest('button');
+                    if (parentButton?.disabled) {
+                        parentButton.dataset.mainMenuWasDisabled = '1';
+                        parentButton.disabled = false;
+                    }
+                    if (el.dataset.mainMenuEditBound !== '1') {
+                        el.dataset.mainMenuEditBound = '1';
+                        el.addEventListener('click', e => e.stopPropagation());
+                        el.addEventListener('mousedown', e => e.stopPropagation());
+                        el.addEventListener('keydown', e => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                el.blur();
+                            } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                el.textContent = getMainButtonLabel(el.dataset.mainMenuKey, el.dataset.mainMenuFallback || '');
+                                el.blur();
+                            }
+                        });
+                        el.addEventListener('blur', () => {
+                            if (el.dataset.mainMenuEditing === '1') saveMainMenuLabel(el);
+                        });
+                    }
+                    el.dataset.mainMenuEditing = '1';
+                    el.contentEditable = 'true';
+                    el.spellcheck = false;
+                    el.classList.add('editable-mode', 'main-menu-inline-editable');
+                } else {
+                    if (el.dataset.mainMenuEditing === '1') saveMainMenuLabel(el);
+                    el.dataset.mainMenuEditing = '0';
+                    el.contentEditable = 'false';
+                    el.classList.remove('editable-mode', 'main-menu-inline-editable');
+                    const parentButton = el.closest('button');
+                    if (parentButton?.dataset.mainMenuWasDisabled === '1') {
+                        parentButton.disabled = true;
+                        delete parentButton.dataset.mainMenuWasDisabled;
+                    }
+                }
+            });
+        }
+
         const editBtn = document.getElementById('edit-btn');
         const editableEls = [
             document.getElementById('front-text'), 
@@ -4451,6 +4733,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function turnOffEditModeAndSave() {
             if(!isEditing) return;
             isEditing = false;
+            setMainMenuLabelsEditable(false);
             editBtn.innerHTML = '<span class="top-btn-emoji">✏️</span><span class="top-btn-label">수정</span>';
             editBtn.classList.replace('bg-amber-300', 'bg-slate-200');
             
@@ -4496,6 +4779,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 turnOffEditModeAndSave();
             } else {
                 isEditing = true;
+                applyMainMenuLabels();
                 editBtn.innerHTML = '<span class="top-btn-emoji">💾</span><span class="top-btn-label">완료</span>';
                 editBtn.classList.replace('bg-slate-200', 'bg-amber-300');
                 
@@ -4505,9 +4789,21 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                         el.classList.add('editable-mode');
                     }
                 });
-                showToast("수정 모드 ON: 밑줄 친 텍스트를 클릭하세요.");
+                setMainMenuLabelsEditable(true);
+                showToast("수정 모드 ON: 카드 문장과 메뉴 글자를 클릭하세요.");
             }
         });
+
+        document.addEventListener('click', (e) => {
+            if (!isEditing) return;
+            const button = e.target.closest('button');
+            if (!button || button === editBtn || e.target.closest('.main-menu-inline-editable')) return;
+            const label = button.querySelector('.main-menu-inline-editable');
+            if (!label) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            label.focus();
+        }, true);
 
         function changeCardWithAnimation(direction, targetIndex = null) {
             if (isEditing) turnOffEditModeAndSave(); 
@@ -4785,16 +5081,20 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
             const utterance = new SpeechSynthesisUtterance(cleanText);
             const isEnglish = String(lang || '').toLowerCase().startsWith('en');
-            const profileIndex = isEnglish ? getSelectedTtsProfileIndex() : 0;
-            const selectedVoice = getTtsVoiceForLanguage(lang, profileIndex);
+            const selectedProfile = isEnglish ? getSelectedNativeTtsProfile() : null;
+            const selectedVoice = isEnglish
+                ? (selectedProfile?.voice || getTtsVoiceForLanguage(lang))
+                : getTtsVoiceForLanguage(lang);
             if (selectedVoice) {
                 utterance.voice = selectedVoice;
                 utterance.lang = selectedVoice.lang || lang;
             } else {
                 utterance.lang = lang;
             }
-            utterance.rate = Math.max(0.5, Math.min(1.5, Number(speed) || 1));
-            utterance.pitch = 1;
+            const profileRate = selectedProfile?.rate || 1;
+            const profilePitch = selectedProfile?.pitch || 1;
+            utterance.rate = Math.max(0.5, Math.min(1.5, (Number(speed) || 1) * profileRate));
+            utterance.pitch = Math.max(0.5, Math.min(1.5, profilePitch));
             utterance.volume = 1;
             utterance.onstart = (event) => {
                 if (requestId !== nativeTtsRequestSerial) return;
@@ -5382,8 +5682,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         /* 기본 TTS 모드
            영어와 한국어 모두 브라우저/운영체제의 speechSynthesis 음성을 사용한다.
            아래 함수들은 위의 Kokoro 호환 함수를 덮어써서 AI 모델 다운로드와 생성 지연을 없앤다. */
-        const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_voice_v2_eight';
+        const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_profile_v3_shared_eight';
+        const NATIVE_TTS_PROFILE_DEFINITIONS = [
+            { id: 'bright-female', label: '밝은 여성', rate: 1.04, pitch: 1.18 },
+            { id: 'clear-female', label: '또렷한 여성', rate: 0.98, pitch: 1.10 },
+            { id: 'calm-female', label: '차분한 여성', rate: 0.90, pitch: 1.02 },
+            { id: 'soft-female', label: '부드러운 여성', rate: 0.94, pitch: 1.14 },
+            { id: 'lively-female', label: '경쾌한 여성', rate: 1.10, pitch: 1.24 },
+            { id: 'natural-conversation', label: '자연스러운 회화', rate: 1.00, pitch: 0.96 },
+            { id: 'low-calm', label: '낮고 차분한 음성', rate: 0.88, pitch: 0.82 },
+            { id: 'quick-clear', label: '빠르고 또렷한 음성', rate: 1.14, pitch: 1.04 }
+        ];
         let nativeEnglishVoices = [];
+        let nativeTtsProfiles = [];
         let selectedNativeTtsVoiceId = safeStorageGet(NATIVE_TTS_VOICE_KEY) || '';
         let nativeTtsActiveUtterance = null;
         let nativeTtsRequestSerial = 0;
@@ -5453,23 +5764,38 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return score;
         }
 
+        function getSelectedNativeTtsProfile() {
+            return nativeTtsProfiles.find(profile => profile.id === selectedNativeTtsVoiceId)
+                || nativeTtsProfiles[0]
+                || null;
+        }
+
         function getSelectedNativeEnglishVoice() {
-            return nativeEnglishVoices.find(voice => getNativeTtsVoiceId(voice) === selectedNativeTtsVoiceId)
+            return getSelectedNativeTtsProfile()?.voice
                 || nativeEnglishVoices[0]
                 || null;
         }
 
         function getSelectedTtsProfileIndex() {
-            const selectedVoice = getSelectedNativeEnglishVoice();
-            return Math.max(0, nativeEnglishVoices.indexOf(selectedVoice));
+            const selectedProfile = getSelectedNativeTtsProfile();
+            return Math.max(0, nativeTtsProfiles.indexOf(selectedProfile));
         }
 
         function updateTtsVoiceButton(customText = '') {
             const button = document.getElementById('tts-voice-btn');
             if (!button) return;
 
+            let labelEl = document.getElementById('main-label-tts-voice');
+            let statusEl = document.getElementById('tts-voice-status');
+            if (!labelEl || !statusEl) {
+                button.innerHTML = '<span aria-hidden="true">🎙️</span> <span id="main-label-tts-voice"></span> <span id="tts-voice-status"></span>';
+                labelEl = document.getElementById('main-label-tts-voice');
+                statusEl = document.getElementById('tts-voice-status');
+            }
+            if (labelEl && !labelEl.isContentEditable) labelEl.textContent = getMainButtonLabel('ttsVoice', '기본');
+
             if (!('speechSynthesis' in window)) {
-                button.textContent = '🎙️ TTS 미지원';
+                if (statusEl) statusEl.textContent = '미지원';
                 button.title = '이 브라우저에서는 기본 TTS를 지원하지 않습니다.';
                 button.setAttribute('aria-label', button.title);
                 button.disabled = true;
@@ -5477,16 +5803,17 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
 
             button.disabled = false;
-            const voice = getSelectedNativeEnglishVoice();
-            const position = voice ? nativeEnglishVoices.indexOf(voice) + 1 : 0;
+            const profile = getSelectedNativeTtsProfile();
+            const voice = profile?.voice || null;
+            const position = profile ? nativeTtsProfiles.indexOf(profile) + 1 : 0;
             const isMobile = isMobileNativeTtsDevice();
-            button.textContent = customText || (voice
-                ? `🎙️ 기본 ${position}/${nativeEnglishVoices.length}`
-                : '🎙️ 기본 TTS');
-            button.title = voice
+            if (statusEl) statusEl.textContent = customText
+                ? String(customText).replace(/^🎙️\s*/, '')
+                : (profile ? `${position}/${nativeTtsProfiles.length}` : 'TTS');
+            button.title = profile
                 ? (isMobile
-                    ? `모바일 영어 기본 음성 변경 · ${position}/${nativeEnglishVoices.length} · ${voice.name} · ${voice.lang}`
-                    : `영어 기본 음성 변경 · ${position}/${nativeEnglishVoices.length} · ${voice.name} · ${voice.lang}`)
+                    ? `모바일 영어 기본 음성 변경 · ${position}/${nativeTtsProfiles.length} · ${profile.label} · ${voice?.name || '기본 음성'}`
+                    : `PC 영어 기본 음성 변경 · ${position}/${nativeTtsProfiles.length} · ${profile.label} · ${voice?.name || '기본 음성'}`)
                 : '영어 기본 음성을 불러오는 중입니다.';
             button.setAttribute('aria-label', button.title);
         }
@@ -5504,14 +5831,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 return String(a.name || '').localeCompare(String(b.name || ''), 'en');
             });
             nativeEnglishVoices = sortedEnglishVoices.slice(0, 8);
+            nativeTtsProfiles = nativeEnglishVoices.length
+                ? NATIVE_TTS_PROFILE_DEFINITIONS.map((definition, index) => ({
+                    ...definition,
+                    voice: nativeEnglishVoices[index % nativeEnglishVoices.length]
+                }))
+                : [];
 
-            if (nativeEnglishVoices.length) {
-                const storedVoiceExists = nativeEnglishVoices.some(
-                    voice => getNativeTtsVoiceId(voice) === selectedNativeTtsVoiceId
+            if (nativeTtsProfiles.length) {
+                const storedProfileExists = nativeTtsProfiles.some(
+                    profile => profile.id === selectedNativeTtsVoiceId
                 );
-                if (!storedVoiceExists) {
-                    const preferredVoice = nativeEnglishVoices[0];
-                    selectedNativeTtsVoiceId = getNativeTtsVoiceId(preferredVoice);
+                if (!storedProfileExists) {
+                    selectedNativeTtsVoiceId = nativeTtsProfiles[0].id;
                     safeStorageSet(NATIVE_TTS_VOICE_KEY, selectedNativeTtsVoiceId);
                 }
             }
@@ -5549,15 +5881,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function cycleTtsVoice() {
             refreshTtsVoices();
-            if (!nativeEnglishVoices.length) {
+            if (!nativeTtsProfiles.length) {
                 showToast('이 기기에서 사용할 수 있는 영어 기본 음성을 찾지 못했습니다.');
                 return;
             }
 
             const currentVoiceIndex = getSelectedTtsProfileIndex();
-            const nextIndex = (currentVoiceIndex + 1) % nativeEnglishVoices.length;
-            const nextVoice = nativeEnglishVoices[nextIndex];
-            selectedNativeTtsVoiceId = getNativeTtsVoiceId(nextVoice);
+            const nextIndex = (currentVoiceIndex + 1) % nativeTtsProfiles.length;
+            const nextProfile = nativeTtsProfiles[nextIndex];
+            selectedNativeTtsVoiceId = nextProfile.id;
             safeStorageSet(NATIVE_TTS_VOICE_KEY, selectedNativeTtsVoiceId);
             updateTtsVoiceButton();
 
@@ -5565,7 +5897,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 ? currentList[currentIndex].en
                 : 'Hello, this is my voice.';
             speakBrowserText(previewText, 'en-US', 1.0);
-            showToast(`영어 기본 TTS ${nextIndex + 1}/${nativeEnglishVoices.length} · ${nextVoice.name}`);
+            showToast(`영어 기본 TTS ${nextIndex + 1}/${nativeTtsProfiles.length} · ${nextProfile.label}`);
         }
 
         function initializeTtsVoices() {
@@ -5787,13 +6119,13 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             isAutoplay = !isAutoplay;
             const btn = document.getElementById('autoplay-btn');
             if (isAutoplay) {
-                document.getElementById('autoplay-btn-text').innerText = "재생 중지";
+                document.getElementById('autoplay-btn-text').innerText = getMainButtonLabel('autoplayStop', '재생 중지');
                 updateActionButtonStates();
                 showToast("자동 재생을 시작합니다.");
                 if(isFlipped) changeCardWithAnimation('next');
                 autoplayTimer = setTimeout(autoplayLoop, 2000);
             } else {
-                document.getElementById('autoplay-btn-text').innerText = "자동 재생";
+                document.getElementById('autoplay-btn-text').innerText = getMainButtonLabel('autoplay', '자동 재생');
                 clearTimeout(autoplayTimer);
                 updateActionButtonStates();
                 showToast("자동 재생 중지");
@@ -7729,10 +8061,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             clone.querySelectorAll('[contenteditable="true"]').forEach(el => {
                 el.setAttribute('contenteditable', 'false');
-                el.classList.remove('editable-mode', 'list-inline-editable', 'list-edit-category-label', 'list-edit-category-emoji', 'list-edit-button-label');
+                el.classList.remove('editable-mode', 'main-menu-inline-editable', 'list-inline-editable', 'list-edit-category-label', 'list-edit-category-emoji', 'list-edit-button-label');
             });
             clone.querySelectorAll('.list-inline-editable').forEach(el => {
                 el.classList.remove('list-inline-editable', 'list-edit-category-label', 'list-edit-category-emoji', 'list-edit-button-label');
+            });
+            clone.querySelectorAll('[data-main-menu-edit-bound]').forEach(el => {
+                el.removeAttribute('data-main-menu-edit-bound');
+                el.removeAttribute('data-main-menu-editing');
+                el.removeAttribute('data-main-menu-key');
+                el.removeAttribute('data-main-menu-fallback');
+            });
+            clone.querySelectorAll('[data-main-menu-was-disabled]').forEach(el => {
+                el.removeAttribute('data-main-menu-was-disabled');
             });
             const cloneToast = clone.querySelector('#toast');
             if (cloneToast) {
@@ -7744,7 +8085,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 el.setAttribute('aria-pressed', 'false');
             });
             const cloneAutoplayText = clone.querySelector('#autoplay-btn-text');
-            if (cloneAutoplayText) cloneAutoplayText.textContent = '자동 재생';
+            if (cloneAutoplayText) cloneAutoplayText.textContent = getMainButtonLabel('autoplay', '자동 재생');
 
             return "<!DOCTYPE html>\n" + clone.outerHTML;
         }
