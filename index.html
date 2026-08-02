@@ -3191,17 +3191,22 @@ body.dark #next-btn:disabled span {
 
 <style id="mobile-list-search-height-match-final">
 @media (max-width: 640px) {
-    /* 검색 줄 전체 높이를 위 '전체 목록' 헤더 줄과 같은 약 49px로 맞춤 */
+    /* 모바일 검색 안내 문구를 '전체 목록' 제목과 같은 크기로 맞추고 높이를 한 단계 더 축소 */
     #list-sentence-search-wrap {
-        padding-top: 0.46rem !important;
-        padding-bottom: 0.46rem !important;
+        padding-top: 0.4rem !important;
+        padding-bottom: 0.4rem !important;
     }
     #list-sentence-search-input {
-        height: 34px !important;
-        min-height: 34px !important;
+        height: 32px !important;
+        min-height: 32px !important;
         padding-top: 0 !important;
         padding-bottom: 0 !important;
-        line-height: 32px !important;
+        line-height: 30px !important;
+    }
+    #list-sentence-search-input::placeholder {
+        font-size: 0.82rem !important;
+        line-height: 1 !important;
+        letter-spacing: -0.035em !important;
     }
 }
 </style>
