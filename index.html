@@ -6798,7 +6798,48 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return changed;
         }
 
+        function captureListScrollAnchor() {
+            const container = document.getElementById('list-container');
+            if (!container) return null;
+            const rows = Array.from(container.children).filter(row => row.dataset.listRowKey);
+            if (!rows.length) return { rowKey: '', offset: 0, scrollTop: container.scrollTop };
+
+            const containerRect = container.getBoundingClientRect();
+            const anchorRow = rows.find(row => row.getBoundingClientRect().bottom > containerRect.top + 1)
+                || rows[rows.length - 1];
+            return {
+                rowKey: anchorRow.dataset.listRowKey || '',
+                offset: anchorRow.getBoundingClientRect().top - containerRect.top,
+                scrollTop: container.scrollTop
+            };
+        }
+
+        function restoreListScrollAnchor(anchor) {
+            if (!anchor) return;
+            let remainingPasses = 2;
+            const alignAnchor = () => {
+                const container = document.getElementById('list-container');
+                if (!container) return;
+                const anchorRow = Array.from(container.children)
+                    .find(row => row.dataset.listRowKey === anchor.rowKey);
+
+                if (anchorRow) {
+                    const currentOffset = anchorRow.getBoundingClientRect().top - container.getBoundingClientRect().top;
+                    const correction = currentOffset - anchor.offset;
+                    if (Math.abs(correction) > 0.5) container.scrollTop += correction;
+                } else if (remainingPasses === 2) {
+                    container.scrollTop = anchor.scrollTop;
+                }
+
+                remainingPasses--;
+                if (remainingPasses > 0) requestAnimationFrame(alignAnchor);
+                else saveCurrentPosition();
+            };
+            requestAnimationFrame(alignAnchor);
+        }
+
         function toggleListEditMode() {
+            const scrollAnchor = captureListScrollAnchor();
             endListDrag();
             endCategoryDrag();
             if (isListEditMode) saveAllInlineListEdits(false);
@@ -6809,6 +6850,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 listRowRevealSet.clear();
             }
             renderListModal();
+            restoreListScrollAnchor(scrollAnchor);
             showToast(isListEditMode ? '점선 글자는 클릭해 수정하고, 문장과 대분류 카드는 드래그해 순서를 바꾸세요.' : '목록 수정 내용이 저장되었습니다.');
         }
 
