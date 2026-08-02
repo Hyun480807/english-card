@@ -352,6 +352,31 @@
         body.dark .sentence-search-result-en { color: #cbd5e1; }
         body.dark .sentence-search-result-meta { color: #94a3b8; }
         body.dark .sentence-search-empty { color: #94a3b8; }
+        #list-sentence-search-wrap {
+            flex: 0 0 auto;
+            margin-bottom: 0;
+            padding: 0.75rem 1rem;
+            background: #ffffff;
+            border-bottom: 1px solid #e2e8f0;
+            z-index: 30;
+        }
+        #list-sentence-search-results {
+            left: 1rem;
+            right: 1rem;
+            top: calc(100% - 0.4rem);
+        }
+        body.dark #list-sentence-search-wrap {
+            background: #111827;
+            border-color: #334155;
+        }
+        #list-container > [data-list-row-key].list-search-target {
+            border-color: #6366f1 !important;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2) !important;
+        }
+        body.dark #list-container > [data-list-row-key].list-search-target {
+            border-color: #818cf8 !important;
+            box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.24) !important;
+        }
         /* 목록 페이지 대분류: 2줄 고정 + 한 줄 3개 + 세로 스크롤 */
         #category-container {
             display: grid !important;
@@ -3079,6 +3104,8 @@ body.dark #next-btn:disabled span {
     #app-shell :is(
         #sentence-search-input,
         #sentence-search-clear,
+        #list-sentence-search-input,
+        #list-sentence-search-clear,
         #main-font-increase-btn,
         #main-font-decrease-btn,
         #main-delete-sentence-btn,
@@ -3309,6 +3336,13 @@ body.dark #next-btn:disabled span {
                     <button id="close-list-btn" type="button" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-colors"><span>닫기 ✕</span></button>
                 </div>
             </div>
+            <div id="list-sentence-search-wrap" class="sentence-search-wrap">
+                <div class="sentence-search-box">
+                    <input id="list-sentence-search-input" class="sentence-search-input" type="search" autocomplete="off" placeholder="영어/한글 문장 검색" value="">
+                    <button id="list-sentence-search-clear" class="sentence-search-clear hidden" type="button" aria-label="검색어 지우기">✕</button>
+                </div>
+                <div id="list-sentence-search-results" class="sentence-search-results hidden"></div>
+            </div>
             <div id="list-edit-panel" class="list-edit-panel hidden"></div>
             <div id="list-bookmark-difficulty-filter-wrap" class="bookmark-difficulty-filter-wrap hidden">
                 <label class="bookmark-difficulty-filter-label" for="list-bookmark-difficulty-select">북마크 난이도</label>
@@ -3454,6 +3488,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let listRandomOrder = null;
         let listRandomScopeKey = '';
         const listRowRevealSet = new Set();
+        let lastListScrollAnchor = null;
         let listDragState = null;
         let listDragAutoScrollFrame = 0;
         let categoryDragState = null;
@@ -3714,9 +3749,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const listModal = document.getElementById('list-modal');
             const listContainer = document.getElementById('list-container');
             const isListOpen = shouldRestoreListModal || (listModal && !listModal.classList.contains('hidden'));
+            const liveListScrollAnchor = isListOpen && !isRestoringListScrollAnchor
+                ? serializeListScrollAnchor(captureListScrollAnchor())
+                : null;
+            if (liveListScrollAnchor) lastListScrollAnchor = liveListScrollAnchor;
+            const savedListScrollAnchor = liveListScrollAnchor
+                || normalizePersistedListScrollAnchor(lastListScrollAnchor)
+                || normalizePersistedListScrollAnchor(fallback.listScrollAnchor);
             const listScrollTop = isListOpen
                 ? (shouldRestoreListModal ? restoredListScrollTop : (listContainer ? listContainer.scrollTop : 0))
-                : 0;
+                : (Number(savedListScrollAnchor?.scrollTops?.[0]) || Number(fallback.listScrollTop) || 0);
 
             return {
                 originalIdx: card.originalIdx,
@@ -3731,7 +3773,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 bookmarkDifficultyFilter,
                 listHideEnglish,
                 listHideKorean,
-                listScrollTop
+                listScrollTop,
+                listScrollAnchor: savedListScrollAnchor
             };
         }
 
@@ -4384,6 +4427,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let isShuffleActive = false;
         let shouldRestoreListModal = false;
         let restoredListScrollTop = 0;
+        let restoredListScrollAnchor = null;
+        let isRestoringListScrollAnchor = false;
 
         const flashcard = document.getElementById('flashcard');
         const cardWrapper = document.getElementById('card-wrapper');
@@ -4395,6 +4440,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         const sentenceSearchInput = document.getElementById('sentence-search-input');
         const sentenceSearchResults = document.getElementById('sentence-search-results');
         const sentenceSearchClear = document.getElementById('sentence-search-clear');
+        const listSentenceSearchInput = document.getElementById('list-sentence-search-input');
+        const listSentenceSearchResults = document.getElementById('list-sentence-search-results');
+        const listSentenceSearchClear = document.getElementById('list-sentence-search-clear');
 
         function setFlipButtonText(text) {
             // 정답 확인 버튼은 삭제했고, 카드 클릭/Enter/방향키로 정답 제어만 유지함.
@@ -4563,6 +4611,148 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         });
         document.addEventListener('click', (e) => {
             if (!e.target.closest('#sentence-search-wrap')) hideSentenceSearchResults();
+        });
+
+        function hideListSentenceSearchResults() {
+            listSentenceSearchResults.classList.add('hidden');
+        }
+
+        function clearListSentenceSearch() {
+            listSentenceSearchInput.value = '';
+            listSentenceSearchClear.classList.add('hidden');
+            listSentenceSearchResults.innerHTML = '';
+            hideListSentenceSearchResults();
+        }
+
+        function scrollListToSearchedCard(card) {
+            if (!card) return;
+            const rowKey = getListRowKey(card);
+            const displayedCards = isListBookmarkMode ? getBookmarkedCards() : getCategoryCards(activeListCategory);
+            const targetIsDisplayed = displayedCards.some(item => getListRowKey(item) === rowKey);
+
+            if (isListEditMode) saveAllInlineListEdits(false);
+
+            if (!targetIsDisplayed) {
+                activeListCategory = 'all';
+                isListBookmarkMode = false;
+            }
+
+            clearListSentenceSearch();
+            listSentenceSearchInput.blur();
+            isRestoringListScrollAnchor = true;
+            renderListModal();
+
+            requestAnimationFrame(() => {
+                const container = document.getElementById('list-container');
+                if (!container) {
+                    isRestoringListScrollAnchor = false;
+                    return;
+                }
+                const targetRow = Array.from(container.children)
+                    .find(row => row.dataset.listRowKey === rowKey);
+                if (!targetRow) {
+                    isRestoringListScrollAnchor = false;
+                    return;
+                }
+
+                const containerRect = container.getBoundingClientRect();
+                const visibleTop = Math.max(0, containerRect.top);
+                const listPaddingTop = Number.parseFloat(getComputedStyle(container).paddingTop) || 0;
+                const targetViewportTop = Math.min(
+                    Math.max(visibleTop + listPaddingTop, listPaddingTop),
+                    Math.max(12, (window.innerHeight || document.documentElement.clientHeight) - 48)
+                );
+                restoreListScrollAnchor({
+                    rowKey,
+                    viewportTop: targetViewportTop,
+                    scrollTops: getListScrollTargets(container).map(target => target.scrollTop)
+                });
+                targetRow.classList.add('list-search-target');
+                setTimeout(() => targetRow.classList.remove('list-search-target'), 1600);
+                showToast('검색한 문장 위치로 이동했습니다.');
+            });
+        }
+
+        function renderListSentenceSearchResults() {
+            const keyword = normalizeSearchValue(listSentenceSearchInput.value);
+            listSentenceSearchResults.innerHTML = '';
+            listSentenceSearchClear.classList.toggle('hidden', !keyword);
+
+            if (!keyword) {
+                hideListSentenceSearchResults();
+                return;
+            }
+
+            const matches = getCategoryCards('all').filter(card => {
+                const sentenceText = normalizeSearchValue(`${card.en || ''}${card.ko || ''}`);
+                return sentenceText.includes(keyword);
+            });
+
+            if (matches.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'sentence-search-empty';
+                empty.textContent = '검색 결과가 없습니다.';
+                listSentenceSearchResults.appendChild(empty);
+                listSentenceSearchResults.classList.remove('hidden');
+                return;
+            }
+
+            const visibleMatches = matches.slice(0, 80);
+            visibleMatches.forEach(card => {
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'sentence-search-result-row';
+                row.setAttribute('aria-label', `${card.ko || ''} ${card.en || ''}`.trim());
+
+                const koLine = document.createElement('div');
+                koLine.className = 'sentence-search-result-ko';
+                koLine.textContent = card.ko || '(한글 없음)';
+                row.appendChild(koLine);
+
+                const enLine = document.createElement('div');
+                enLine.className = 'sentence-search-result-en';
+                enLine.textContent = card.en || '(영어 없음)';
+                row.appendChild(enLine);
+
+                const metaLine = document.createElement('div');
+                metaLine.className = 'sentence-search-result-meta';
+                metaLine.textContent = `${card.categoryEmoji || ''} ${card.categoryLabel || ''}`.trim();
+                row.appendChild(metaLine);
+
+                row.addEventListener('click', () => scrollListToSearchedCard(card));
+                listSentenceSearchResults.appendChild(row);
+            });
+
+            if (matches.length > visibleMatches.length) {
+                const more = document.createElement('div');
+                more.className = 'sentence-search-empty';
+                more.textContent = `${matches.length - visibleMatches.length}개 결과가 더 있습니다. 검색어를 조금 더 입력하세요.`;
+                listSentenceSearchResults.appendChild(more);
+            }
+
+            listSentenceSearchResults.classList.remove('hidden');
+        }
+
+        listSentenceSearchInput.addEventListener('input', renderListSentenceSearchResults);
+        listSentenceSearchInput.addEventListener('focus', renderListSentenceSearchResults);
+        listSentenceSearchInput.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+                clearListSentenceSearch();
+                listSentenceSearchInput.blur();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const firstRow = listSentenceSearchResults.querySelector('.sentence-search-result-row');
+                if (firstRow) firstRow.click();
+            }
+        });
+        listSentenceSearchClear.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearListSentenceSearch();
+            listSentenceSearchInput.focus();
+        });
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#list-sentence-search-wrap')) hideListSentenceSearchResults();
         });
 
         function renderCard() {
@@ -6165,10 +6355,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return item ? `${item.emoji} ${item.label}` : '전체';
         }
 
-        function saveCurrentPosition() {
+        function saveCurrentPositionLocally() {
             const positionState = getCurrentPositionState();
-            if (!positionState) return;
+            if (!positionState) return null;
             safeStorageSet(POSITION_KEY, JSON.stringify(positionState));
+            return positionState;
+        }
+
+        function saveCurrentPosition() {
+            const positionState = saveCurrentPositionLocally();
+            if (!positionState) return;
             queueSupabaseSave('position');
         }
 
@@ -6216,6 +6412,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 listHideKorean = !!state.listHideKorean;
                 shouldRestoreListModal = !!state.isListOpen;
                 restoredListScrollTop = Number(state.listScrollTop) || 0;
+                lastListScrollAnchor = normalizePersistedListScrollAnchor(state.listScrollAnchor);
+                restoredListScrollAnchor = lastListScrollAnchor;
                 isReversed = !!state.isReversed;
                 isKoreanAutoplay = !!state.isKoreanAutoplay;
                 lastKoreanAutoReadCardKey = '';
@@ -6798,42 +6996,127 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return changed;
         }
 
+        let listScrollAnchorRestoreId = 0;
+
+        function getListScrollTargets(container) {
+            const candidates = [
+                container,
+                document.getElementById('app-shell'),
+                document.scrollingElement
+            ];
+            return candidates.filter((target, index) => target && candidates.indexOf(target) === index);
+        }
+
+        function normalizePersistedListScrollAnchor(anchor) {
+            if (!anchor || !anchor.rowKey) return null;
+            const viewportTop = Number(anchor.viewportTop);
+            const scrollTops = Array.isArray(anchor.scrollTops)
+                ? anchor.scrollTops.map(value => Number(value) || 0)
+                : (Array.isArray(anchor.scrollStates)
+                    ? anchor.scrollStates.map(state => Number(state?.scrollTop) || 0)
+                    : []);
+            return {
+                rowKey: String(anchor.rowKey),
+                viewportTop: Number.isFinite(viewportTop) ? viewportTop : 0,
+                scrollTops
+            };
+        }
+
+        function serializeListScrollAnchor(anchor) {
+            return normalizePersistedListScrollAnchor(anchor);
+        }
+
+        function hydrateListScrollAnchor(anchor) {
+            const saved = normalizePersistedListScrollAnchor(anchor);
+            if (!saved) return null;
+            const container = document.getElementById('list-container');
+            if (!container) return null;
+            const targets = getListScrollTargets(container);
+            return {
+                rowKey: saved.rowKey,
+                viewportTop: saved.viewportTop,
+                scrollStates: targets.map((target, index) => ({
+                    target,
+                    scrollTop: Number(saved.scrollTops[index]) || 0
+                }))
+            };
+        }
+
         function captureListScrollAnchor() {
             const container = document.getElementById('list-container');
             if (!container) return null;
             const rows = Array.from(container.children).filter(row => row.dataset.listRowKey);
-            if (!rows.length) return { rowKey: '', offset: 0, scrollTop: container.scrollTop };
-
             const containerRect = container.getBoundingClientRect();
-            const anchorRow = rows.find(row => row.getBoundingClientRect().bottom > containerRect.top + 1)
-                || rows[rows.length - 1];
+            const visibleTop = Math.max(0, containerRect.top);
+            const visibleBottom = Math.min(window.innerHeight || document.documentElement.clientHeight, containerRect.bottom);
+            const anchorRow = rows.find(row => {
+                const rect = row.getBoundingClientRect();
+                return rect.bottom > visibleTop + 1 && rect.top < visibleBottom - 1;
+            }) || rows[0] || null;
+
             return {
-                rowKey: anchorRow.dataset.listRowKey || '',
-                offset: anchorRow.getBoundingClientRect().top - containerRect.top,
-                scrollTop: container.scrollTop
+                rowKey: anchorRow?.dataset.listRowKey || '',
+                viewportTop: anchorRow ? anchorRow.getBoundingClientRect().top : visibleTop,
+                scrollStates: getListScrollTargets(container).map(target => ({
+                    target,
+                    scrollTop: target.scrollTop
+                }))
             };
         }
 
         function restoreListScrollAnchor(anchor) {
-            if (!anchor) return;
-            let remainingPasses = 2;
+            const runtimeAnchor = hydrateListScrollAnchor(anchor);
+            if (!runtimeAnchor) {
+                isRestoringListScrollAnchor = false;
+                return;
+            }
+            anchor = runtimeAnchor;
+            lastListScrollAnchor = serializeListScrollAnchor(anchor);
+            isRestoringListScrollAnchor = true;
+            const restoreId = ++listScrollAnchorRestoreId;
+            const container = document.getElementById('list-container');
+            const appShell = document.getElementById('app-shell');
+            if (!container) return;
+
+            const previousContainerOverflowAnchor = container.style.overflowAnchor;
+            const previousShellOverflowAnchor = appShell?.style.overflowAnchor || '';
+            container.style.overflowAnchor = 'none';
+            if (appShell) appShell.style.overflowAnchor = 'none';
+
+            let pass = 0;
+            const maxPasses = 14;
             const alignAnchor = () => {
-                const container = document.getElementById('list-container');
-                if (!container) return;
-                const anchorRow = Array.from(container.children)
+                if (restoreId !== listScrollAnchorRestoreId) return;
+                const currentContainer = document.getElementById('list-container');
+                if (!currentContainer) return;
+                const anchorRow = Array.from(currentContainer.children)
                     .find(row => row.dataset.listRowKey === anchor.rowKey);
 
                 if (anchorRow) {
-                    const currentOffset = anchorRow.getBoundingClientRect().top - container.getBoundingClientRect().top;
-                    const correction = currentOffset - anchor.offset;
-                    if (Math.abs(correction) > 0.5) container.scrollTop += correction;
-                } else if (remainingPasses === 2) {
-                    container.scrollTop = anchor.scrollTop;
+                    let correction = anchorRow.getBoundingClientRect().top - anchor.viewportTop;
+                    const scrollTargets = getListScrollTargets(currentContainer);
+                    for (const target of scrollTargets) {
+                        if (Math.abs(correction) <= 0.5) break;
+                        if (target.scrollHeight <= target.clientHeight + 1) continue;
+                        const before = target.scrollTop;
+                        target.scrollTop = before + correction;
+                        correction -= target.scrollTop - before;
+                    }
+                } else if (pass === 0) {
+                    (anchor.scrollStates || []).forEach(({ target, scrollTop }) => {
+                        if (target) target.scrollTop = scrollTop;
+                    });
                 }
 
-                remainingPasses--;
-                if (remainingPasses > 0) requestAnimationFrame(alignAnchor);
-                else saveCurrentPosition();
+                pass++;
+                if (pass < maxPasses) {
+                    requestAnimationFrame(alignAnchor);
+                } else {
+                    container.style.overflowAnchor = previousContainerOverflowAnchor;
+                    if (appShell) appShell.style.overflowAnchor = previousShellOverflowAnchor;
+                    isRestoringListScrollAnchor = false;
+                    saveCurrentPosition();
+                }
             };
             requestAnimationFrame(alignAnchor);
         }
@@ -7511,25 +7794,49 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             document.body.classList.remove('grammar-table-open');
         }
 
-        function openListModal(restoreScroll = null) {
+        function openListModal(restoreScroll = null, restoreAnchor = null) {
+            const savedState = safeJsonParse(safeStorageGet(POSITION_KEY), {});
+            const anchorToRestore = normalizePersistedListScrollAnchor(restoreAnchor)
+                || normalizePersistedListScrollAnchor(lastListScrollAnchor)
+                || normalizePersistedListScrollAnchor(savedState.listScrollAnchor);
+            const scrollToRestore = restoreScroll !== null
+                ? Number(restoreScroll) || 0
+                : Number(savedState.listScrollTop) || 0;
+            if (anchorToRestore) {
+                lastListScrollAnchor = anchorToRestore;
+                isRestoringListScrollAnchor = true;
+            }
             renderListModal();
             const modal = document.getElementById('list-modal');
             const container = document.getElementById('list-container');
             document.getElementById('app-shell')?.classList.add('list-modal-open');
             modal.classList.remove('hidden');
             requestAnimationFrame(() => {
-                if (container && restoreScroll !== null) container.scrollTop = restoreScroll;
-                saveCurrentPosition();
+                if (anchorToRestore) {
+                    restoreListScrollAnchor(anchorToRestore);
+                } else {
+                    isRestoringListScrollAnchor = false;
+                    if (container) container.scrollTop = scrollToRestore;
+                    saveCurrentPosition();
+                }
             });
         }
 
         function closeListModal() {
+            const currentAnchor = isRestoringListScrollAnchor
+                ? normalizePersistedListScrollAnchor(lastListScrollAnchor)
+                : serializeListScrollAnchor(captureListScrollAnchor());
+            if (currentAnchor) lastListScrollAnchor = currentAnchor;
+            clearListSentenceSearch();
+            listScrollAnchorRestoreId++;
+            isRestoringListScrollAnchor = false;
             endListDrag();
             endCategoryDrag();
             if (isListEditMode) saveAllInlineListEdits(false);
             document.getElementById('app-shell')?.classList.remove('list-modal-open');
             shouldRestoreListModal = false;
             restoredListScrollTop = 0;
+            restoredListScrollAnchor = null;
             isListEditMode = false;
             document.getElementById('list-modal').classList.add('hidden');
             saveCurrentPosition();
@@ -7538,9 +7845,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function restoreListModalIfNeeded() {
             if (!shouldRestoreListModal) return;
             const scrollTop = restoredListScrollTop;
+            const scrollAnchor = restoredListScrollAnchor;
             shouldRestoreListModal = false;
             restoredListScrollTop = 0;
-            openListModal(scrollTop);
+            restoredListScrollAnchor = null;
+            openListModal(scrollTop, scrollAnchor);
         }
 
         function reindexCards() {
@@ -7865,7 +8174,26 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (isListEditMode) { e.preventDefault(); return; }
             closeListModal();
         });
-        document.getElementById('list-container').addEventListener('scroll', () => scheduleListPositionSave(160), { passive: true });
+        function handleListViewportScroll() {
+            const modal = document.getElementById('list-modal');
+            if (!modal || modal.classList.contains('hidden') || isRestoringListScrollAnchor) return;
+            scheduleListPositionSave(160);
+        }
+        document.getElementById('list-container').addEventListener('scroll', handleListViewportScroll, { passive: true });
+        document.getElementById('app-shell')?.addEventListener('scroll', handleListViewportScroll, { passive: true });
+        window.addEventListener('scroll', handleListViewportScroll, { passive: true });
+        const savePositionBeforeLeaving = () => {
+            if (listPositionSaveTimer) {
+                clearTimeout(listPositionSaveTimer);
+                listPositionSaveTimer = 0;
+            }
+            saveCurrentPositionLocally();
+        };
+        window.addEventListener('pagehide', savePositionBeforeLeaving);
+        window.addEventListener('beforeunload', savePositionBeforeLeaving);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') savePositionBeforeLeaving();
+        });
         document.getElementById('list-container').addEventListener('dragover', (event) => {
             if (!listDragState) return;
             event.preventDefault();
