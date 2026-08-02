@@ -3189,6 +3189,23 @@ body.dark #next-btn:disabled span {
     }
 </style>
 
+<style id="mobile-list-search-height-match-final">
+@media (max-width: 640px) {
+    /* 검색 줄 전체 높이를 위 '전체 목록' 헤더 줄과 같은 약 49px로 맞춤 */
+    #list-sentence-search-wrap {
+        padding-top: 0.46rem !important;
+        padding-bottom: 0.46rem !important;
+    }
+    #list-sentence-search-input {
+        height: 34px !important;
+        min-height: 34px !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        line-height: 32px !important;
+    }
+}
+</style>
+
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 24.00px; --main-question-size: 20.00px; --main-desc-size: 14.00px; --main-desc-line-height: 1.55; --list-title-size: 18.00px; --list-subtitle-size: 12.00px; --list-category-size: 11.52px; --list-category-count-size: 10.00px; --list-ko-size: 14.00px; --list-en-size: 12.00px; --list-meta-size: 10.00px;">
