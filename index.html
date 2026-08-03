@@ -3420,6 +3420,40 @@ body.dark #next-btn:disabled span {
 }
 </style>
 
+
+
+<style id="desktop-list-edit-height-lock-patch">
+/* PC 목록 수정 모드: 선택 도구를 검색창과 같은 자리에 표시해 상단 높이를 고정 */
+@media (min-width: 431px) {
+    #list-sentence-search-wrap.list-edit-slot-active > .sentence-search-box {
+        display: none !important;
+    }
+    #list-sentence-search-wrap.list-edit-slot-active > #list-sentence-search-results {
+        display: none !important;
+    }
+    #list-sentence-search-wrap > #list-edit-panel.desktop-inline-edit-panel {
+        width: 100% !important;
+        min-height: 38px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        background: transparent !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    #list-sentence-search-wrap > #list-edit-panel.desktop-inline-edit-panel .list-bulk-toolbar {
+        width: 100% !important;
+        min-height: 38px !important;
+    }
+}
+</style>
+
+
+<style id="list-title-right-shift-final">
+/* 목록 페이지 제목을 PC·모바일 모두 오른쪽으로 한 칸 이동 */
+#list-modal .list-modal-header h2 {
+    margin-left: 4px !important;
+}
+</style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-4 dark">
     <div id="app-shell" class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6 sm:p-8 relative" style="--main-title-size: 28.80px; --main-question-size: 24.00px; --main-desc-size: 16.80px; --main-desc-line-height: 1.62; --list-title-size: 18.00px; --list-subtitle-size: 12.00px; --list-category-size: 11.52px; --list-category-count-size: 10.00px; --list-ko-size: 14.00px; --list-en-size: 12.00px; --list-meta-size: 10.00px; --add-modal-scale: 1.254;">
@@ -8690,9 +8724,27 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
         }
 
+        function placeListEditPanelForViewport() {
+            const panel = document.getElementById('list-edit-panel');
+            const searchWrap = document.getElementById('list-sentence-search-wrap');
+            const listModal = document.getElementById('list-modal');
+            if (!panel || !searchWrap || !listModal) return;
+
+            const useDesktopSearchSlot = window.matchMedia('(min-width: 431px)').matches && isListEditMode;
+            searchWrap.classList.toggle('list-edit-slot-active', useDesktopSearchSlot);
+            panel.classList.toggle('desktop-inline-edit-panel', useDesktopSearchSlot);
+
+            if (useDesktopSearchSlot) {
+                if (panel.parentElement !== searchWrap) searchWrap.appendChild(panel);
+            } else if (panel.parentElement !== listModal || panel.previousElementSibling !== searchWrap) {
+                searchWrap.insertAdjacentElement('afterend', panel);
+            }
+        }
+
         function renderListEditPanel(visibleList = []) {
             const panel = document.getElementById('list-edit-panel');
             if (!panel) return;
+            placeListEditPanelForViewport();
             panel.replaceChildren();
             if (!isListEditMode) {
                 panel.classList.add('hidden');
@@ -8752,6 +8804,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             panel.appendChild(toolbar);
             updateListBulkSelectionControls(visibleList);
         }
+
+        const listEditLayoutQuery = window.matchMedia('(min-width: 431px)');
+        listEditLayoutQuery.addEventListener?.('change', () => {
+            if (isListEditMode) renderListModal({ force: true });
+            else placeListEditPanelForViewport();
+        });
 
 
         function saveAllInlineListEdits(showMessage = false) {
