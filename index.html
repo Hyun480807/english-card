@@ -3484,6 +3484,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         const UI_CONFIG_UPDATED_KEY = STORAGE_KEY + '_ui_config_updated_v2';
         const SYNC_BASE_PAYLOAD_KEY = STORAGE_KEY + '_supabase_base_payload_v2';
         const SYNC_DEVICE_ID_KEY = STORAGE_KEY + '_sync_device_id_v1';
+        const POSITION_SYNC_PENDING_KEY = STORAGE_KEY + '_position_sync_pending_v1';
+        const POSITION_SYNC_REVISION_KEY = STORAGE_KEY + '_position_sync_revision_v1';
+        const POSITION_SYNC_UPDATED_AT_KEY = STORAGE_KEY + '_position_sync_updated_at_v1';
+        const POSITION_SYNC_HASH_KEY = STORAGE_KEY + '_position_sync_hash_v1';
         const CORRUPT_DATA_RECOVERY_KEY = STORAGE_KEY + '_corrupt_data_recovery_v1';
         const STARTUP_BACKUP_META_KEY = STORAGE_KEY + '_startup_backup_meta_v1';
         const BACKUP_DB_NAME = 'english-card-backups-v1';
@@ -3581,6 +3585,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         // 개인용 1인 앱 자동 동기화 고정값: PC/모바일이 같은 URL을 열면 항상 같은 행을 사용합니다.
         const AUTO_SYNC_CODE = 'HNLCARD-MAIN';
         const AUTO_SYNC_ROW_ID = '11111111-1111-4111-8111-111111111111';
+        const POSITION_SYNC_DURABLE_DELAY_MS = 60000;
         let supabaseClient = null;
         let currentSyncCode = AUTO_SYNC_CODE;
         let syncSaveTimer = null;
@@ -3600,6 +3605,21 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let localDataRecoveryRequired = false;
         let deferredSupabaseRowWhileListOpen = null;
         let deferredSupabaseOptionsWhileListOpen = null;
+        let positionSyncTimer = 0;
+        let positionSyncDeferredApplyTimer = 0;
+        let positionSyncPollTimer = 0;
+        let positionSyncRealtimeChannel = null;
+        let positionSyncInitializationPromise = null;
+        let positionSyncPendingState = null;
+        let positionSyncLastPublishedHash = '';
+        let positionSyncSeenRevision = 0;
+        let positionSyncSeenUpdatedAt = '';
+        let positionSyncInFlight = false;
+        let positionSyncFollowUp = false;
+        let positionSyncReadInFlight = false;
+        let deferredPositionSyncRow = null;
+        let isApplyingRemotePosition = false;
+        let positionSyncRealtimeReady = false;
 
 
         const memoryStorageFallback = {};
@@ -3847,7 +3867,6 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     revisionBeforeRead: options.revisionBeforeRead
                 };
             }
-            setPendingSync(true);
             updateSyncStatus('목록 사용 중 · 닫으면 동기화 반영', 'warn');
             return true;
         }
@@ -3902,6 +3921,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!remoteUpdatedAt) return true;
             const localUpdatedAt = safeStorageGet(SYNC_LAST_UPDATED_KEY);
             if (!localUpdatedAt) return true;
+            const remoteTime = Date.parse(remoteUpdatedAt);
+            const localTime = Date.parse(localUpdatedAt);
+            if (Number.isFinite(remoteTime) && Number.isFinite(localTime)) return remoteTime > localTime;
             return String(remoteUpdatedAt) !== String(localUpdatedAt);
         }
 
@@ -3934,6 +3956,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 : (Number(savedListScrollAnchor?.scrollTops?.[0]) || Number(fallback.listScrollTop) || 0);
 
             return {
+                cardKey: cardStableKey(card),
                 originalIdx: card.originalIdx,
                 activeStudyCategory,
                 activeListCategory,
@@ -4649,6 +4672,511 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return data || null;
         }
 
+        async function readMainPositionSyncRow() {
+            const client = await getSupabaseClient();
+            const { data, error } = await client
+                .from(SUPABASE_TABLE)
+                .select('id,sync_code,updated_at,positionsByDevice:data->positionsByDevice,lastMergedBy:data->>lastMergedBy,deviceId:data->>deviceId,syncRevision:data->>syncRevision')
+                .eq('sync_code', AUTO_SYNC_CODE)
+                .maybeSingle();
+            if (error) throw error;
+            if (!data) return null;
+            return {
+                id: data.id,
+                sync_code: data.sync_code,
+                updated_at: data.updated_at,
+                data: {
+                    positionsByDevice: data.positionsByDevice || {},
+                    lastMergedBy: data.lastMergedBy || '',
+                    deviceId: data.deviceId || '',
+                    syncRevision: Number(data.syncRevision) || 0
+                }
+            };
+        }
+
+        function normalizePositionSyncState(value) {
+            if (!value || typeof value !== 'object') return null;
+            const originalIdx = Number(value.originalIdx);
+            const rawAnchor = normalizePersistedListScrollAnchor(value.listScrollAnchor);
+            const rawContainerOffsetValue = value.listScrollAnchor?.containerOffset;
+            const rawContainerOffset = rawContainerOffsetValue === null || rawContainerOffsetValue === undefined || rawContainerOffsetValue === ''
+                ? NaN
+                : Number(rawContainerOffsetValue);
+            const listScrollAnchor = rawAnchor ? {
+                ...rawAnchor,
+                viewportTop: Math.round(Number(rawAnchor.viewportTop) || 0),
+                containerOffset: Number.isFinite(rawContainerOffset) ? Math.round(rawContainerOffset) : null,
+                scrollTops: rawAnchor.scrollTops.map(item => Math.max(0, Math.round(Number(item) || 0)))
+            } : null;
+            return {
+                cardKey: String(value.cardKey || ''),
+                originalIdx: Number.isFinite(originalIdx) ? originalIdx : 0,
+                activeStudyCategory: String(value.activeStudyCategory || 'all'),
+                activeListCategory: String(value.activeListCategory || 'all'),
+                isFilterMode: !!value.isFilterMode,
+                isReversed: !!value.isReversed,
+                isKoreanAutoplay: !!value.isKoreanAutoplay,
+                isShuffleActive: !!value.isShuffleActive,
+                isListOpen: !!value.isListOpen,
+                isListBookmarkMode: !!value.isListBookmarkMode,
+                bookmarkDifficultyFilter: normalizeDifficultyFilter(value.bookmarkDifficultyFilter),
+                listHideEnglish: !!value.listHideEnglish,
+                listHideKorean: !!value.listHideKorean,
+                listScrollTop: Math.max(0, Math.round(Number(value.listScrollTop) || 0)),
+                listScrollAnchor
+            };
+        }
+
+        function positionStateFingerprint(value) {
+            const normalized = normalizePositionSyncState(value);
+            if (!normalized) return '';
+            const comparable = { ...normalized };
+            if (normalized.listScrollAnchor?.rowKey) {
+                comparable.listScrollTop = 0;
+                comparable.listScrollAnchor = {
+                    rowKey: normalized.listScrollAnchor.rowKey,
+                    containerOffset: Number.isFinite(normalized.listScrollAnchor.containerOffset)
+                        ? Math.round(normalized.listScrollAnchor.containerOffset / 8) * 8
+                        : null
+                };
+            } else {
+                comparable.listScrollTop = Math.round(normalized.listScrollTop / 32) * 32;
+                comparable.listScrollAnchor = null;
+            }
+            return simpleCardHash(syncComparable(comparable));
+        }
+
+        function readPersistedPositionSyncPending() {
+            const saved = safeJsonParse(safeStorageGet(POSITION_SYNC_PENDING_KEY), null);
+            const state = normalizePositionSyncState(saved?.state);
+            if (!state) return null;
+            return {
+                state,
+                hash: positionStateFingerprint(state),
+                queuedAt: Number(saved.queuedAt) || Date.now(),
+                broadcastedAt: Number(saved.broadcastedAt) || 0
+            };
+        }
+
+        function persistPositionSyncPending(record) {
+            positionSyncPendingState = record || null;
+            safeStorageSet(POSITION_SYNC_PENDING_KEY, record ? JSON.stringify(record) : '');
+        }
+
+        function queuePositionSync(rawState = null, delayMs = 180, options = {}) {
+            if ((!appHasFinishedInitialRender && !options.force) || isApplyingRemotePosition || isApplyingRemoteData) return false;
+            const state = normalizePositionSyncState(rawState || getCurrentPositionState());
+            if (!state) return false;
+            const hash = positionStateFingerprint(state);
+            if (!hash) return false;
+            const existing = positionSyncPendingState || readPersistedPositionSyncPending();
+            if (existing?.hash === hash) return false;
+            if (!options.force && !existing && hash === positionSyncLastPublishedHash) return false;
+
+            const record = { state, hash, queuedAt: Date.now(), broadcastedAt: 0 };
+            persistPositionSyncPending(record);
+            if (positionSyncInFlight) {
+                positionSyncFollowUp = true;
+                return true;
+            }
+            if (positionSyncTimer) clearTimeout(positionSyncTimer);
+            if (!navigator.onLine) return true;
+            positionSyncTimer = setTimeout(() => {
+                positionSyncTimer = 0;
+                uploadPositionToSupabase({ reason: options.reason || 'position' });
+            }, Math.max(0, Number(delayMs) || 0));
+            return true;
+        }
+
+        function rememberPositionSyncRow(row, stateHash = '') {
+            if (!row?.data) return;
+            const revision = Number(row.data.revision) || 0;
+            positionSyncSeenRevision = Math.max(positionSyncSeenRevision, revision);
+            positionSyncSeenUpdatedAt = String(row.updated_at || positionSyncSeenUpdatedAt || '');
+            const hash = stateHash || positionStateFingerprint(row.data.state);
+            if (hash) positionSyncLastPublishedHash = hash;
+            safeStorageSet(POSITION_SYNC_REVISION_KEY, String(positionSyncSeenRevision));
+            safeStorageSet(POSITION_SYNC_UPDATED_AT_KEY, positionSyncSeenUpdatedAt);
+            if (positionSyncLastPublishedHash) safeStorageSet(POSITION_SYNC_HASH_KEY, positionSyncLastPublishedHash);
+        }
+
+        function isPositionSyncRowNewer(row) {
+            if (!row?.data) return false;
+            const remoteTime = Date.parse(row.updated_at || '') || 0;
+            const localTime = Date.parse(positionSyncSeenUpdatedAt || '') || 0;
+            if (remoteTime && localTime && remoteTime !== localTime) return remoteTime > localTime;
+            const revision = Number(row.data.revision) || 0;
+            if (revision !== positionSyncSeenRevision) return revision > positionSyncSeenRevision;
+            return remoteTime > localTime;
+        }
+
+        function shouldDelayRemotePositionApply() {
+            const addModal = document.getElementById('add-modal');
+            const grammarModal = document.getElementById('grammar-table-modal');
+            const activeTag = String(document.activeElement?.tagName || '').toUpperCase();
+            return isEditing
+                || isListEditMode
+                || isApplyingRemoteData
+                || isApplyingRemotePosition
+                || !!document.activeElement?.isContentEditable
+                || ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)
+                || (addModal && !addModal.classList.contains('hidden'))
+                || (grammarModal && grammarModal.classList.contains('is-open'));
+        }
+
+        function deferPositionSyncRow(row) {
+            const incomingRevision = Number(row?.data?.revision) || 0;
+            const savedRevision = Number(deferredPositionSyncRow?.data?.revision) || 0;
+            if (!deferredPositionSyncRow || incomingRevision >= savedRevision) deferredPositionSyncRow = row;
+            if (positionSyncDeferredApplyTimer) clearTimeout(positionSyncDeferredApplyTimer);
+            positionSyncDeferredApplyTimer = setTimeout(() => {
+                positionSyncDeferredApplyTimer = 0;
+                flushDeferredPositionSyncRow();
+            }, 1200);
+        }
+
+        async function flushDeferredPositionSyncRow() {
+            if (!deferredPositionSyncRow || positionSyncPendingState || positionSyncInFlight || shouldDelayRemotePositionApply()) {
+                if (deferredPositionSyncRow) deferPositionSyncRow(deferredPositionSyncRow);
+                return false;
+            }
+            const row = deferredPositionSyncRow;
+            deferredPositionSyncRow = null;
+            return applyPositionSyncRow(row);
+        }
+
+        async function applyPositionSyncRow(row, options = {}) {
+            if (!row?.data) return false;
+            const state = normalizePositionSyncState(row.data.state);
+            if (!state) return false;
+            const force = !!options.force;
+            if (!force && !isPositionSyncRowNewer(row)) return false;
+            if (!force && String(row.data.sourceDeviceId || '') === syncDeviceId) {
+                rememberPositionSyncRow(row, positionStateFingerprint(state));
+                return false;
+            }
+            if (!force && row.data.transport === 'broadcast' && row.data.broadcastKind === 'action' && positionSyncPendingState?.broadcastedAt) {
+                const remoteActionAt = Date.parse(row.data.clientUpdatedAt || row.updated_at || '') || Date.now();
+                const localActionAt = Number(positionSyncPendingState.queuedAt) || 0;
+                if (remoteActionAt >= localActionAt) {
+                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
+                    positionSyncTimer = 0;
+                    positionSyncFollowUp = false;
+                    persistPositionSyncPending(null);
+                }
+            }
+            const wantsBookmarkCard = state.isFilterMode || state.activeStudyCategory === 'bookmark';
+            const targetCard = state.cardKey
+                ? cards.find(card => cardStableKey(card) === state.cardKey)
+                : null;
+            const targetMatchesScope = !state.cardKey || (!!targetCard && (
+                wantsBookmarkCard
+                    ? targetCard.bookmarked && (
+                        state.bookmarkDifficultyFilter === 'all'
+                        || normalizeDifficultyValue(targetCard.difficulty, 'medium') === state.bookmarkDifficultyFilter
+                    )
+                    : state.activeStudyCategory === 'all' || targetCard.category === state.activeStudyCategory
+            ));
+            const missingCard = !targetMatchesScope;
+            const firstSeenAt = Number(row.positionFirstSeenAt) || Date.now();
+            row.positionFirstSeenAt = firstSeenAt;
+            if (!force && missingCard && Date.now() - firstSeenAt < 8000) {
+                deferPositionSyncRow(row);
+                runSyncInitialization();
+                return false;
+            }
+            if (!force && (positionSyncPendingState || positionSyncInFlight || shouldDelayRemotePositionApply())) {
+                deferPositionSyncRow(row);
+                return false;
+            }
+            const applied = await applyRemotePositionState(state);
+            rememberPositionSyncRow(row, positionStateFingerprint(state));
+            return applied;
+        }
+
+        function getLegacySharedPosition(payload) {
+            const direct = getPayloadPosition(payload);
+            if (direct && typeof direct === 'object') return normalizePositionSyncState(direct);
+            const positions = payload?.positionsByDevice;
+            if (!positions || typeof positions !== 'object') return null;
+            const preferredKey = String(payload.lastMergedBy || payload.deviceId || '');
+            if (preferredKey && positions[preferredKey]) return normalizePositionSyncState(positions[preferredKey]);
+            const values = Object.values(positions);
+            return normalizePositionSyncState(values[values.length - 1]);
+        }
+
+        function applySharedPositionFromMainRow(row, options = {}) {
+            if (!row?.data) return false;
+            if (positionSyncRealtimeReady && !options.force) return false;
+            const state = getLegacySharedPosition(row.data);
+            if (!state) return false;
+            return applyPositionSyncRow({
+                data: {
+                    state,
+                    sourceDeviceId: String(row.data.lastMergedBy || row.data.deviceId || ''),
+                    revision: Number(row.data.syncRevision) || 0
+                },
+                updated_at: row.updated_at || new Date().toISOString()
+            }, options);
+        }
+
+        async function uploadPositionToSupabase(options = {}) {
+            if (positionSyncInFlight) {
+                positionSyncFollowUp = true;
+                return false;
+            }
+            positionSyncPendingState ||= readPersistedPositionSyncPending();
+            if (!positionSyncPendingState && options.force) {
+                const state = normalizePositionSyncState(getCurrentPositionState());
+                if (state) persistPositionSyncPending({
+                    state,
+                    hash: positionStateFingerprint(state),
+                    queuedAt: Date.now(),
+                    broadcastedAt: 0
+                });
+            }
+            if (!positionSyncPendingState || !navigator.onLine) return false;
+
+            const outgoing = positionSyncPendingState;
+            try {
+                positionSyncInFlight = true;
+                positionSyncFollowUp = false;
+                if (!outgoing.broadcastedAt && positionSyncRealtimeReady && positionSyncRealtimeChannel) {
+                    const sentAt = new Date().toISOString();
+                    const result = await positionSyncRealtimeChannel.send({
+                        type: 'broadcast',
+                        event: 'position',
+                        payload: {
+                            sourceDeviceId: syncDeviceId,
+                            state: outgoing.state,
+                            stateHash: outgoing.hash,
+                            clientUpdatedAt: sentAt,
+                            kind: 'action'
+                        }
+                    });
+                    const sendStatus = String(result || '').toLowerCase();
+                    const sendFailed = sendStatus.includes('error') || sendStatus.includes('timed');
+                    if (sendFailed) {
+                        stopPositionSyncRealtime();
+                        setTimeout(startPositionSyncRealtime, 1200);
+                    } else if (positionSyncPendingState?.hash === outgoing.hash) {
+                        const broadcasted = { ...outgoing, broadcastedAt: Date.now() };
+                        persistPositionSyncPending(broadcasted);
+                        rememberPositionSyncRow({
+                            data: { state: outgoing.state, sourceDeviceId: syncDeviceId, revision: 0 },
+                            updated_at: sentAt
+                        }, outgoing.hash);
+                    }
+                }
+
+                const currentPending = positionSyncPendingState;
+                if (!currentPending || currentPending.hash !== outgoing.hash) {
+                    positionSyncFollowUp = true;
+                    return true;
+                }
+
+                const quietFor = Date.now() - Number(currentPending.queuedAt || 0);
+                const shouldPersistNow = !!options.persist
+                    || !positionSyncRealtimeReady
+                    || !currentPending.broadcastedAt
+                    || quietFor >= POSITION_SYNC_DURABLE_DELAY_MS;
+                if (!shouldPersistNow) {
+                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
+                    positionSyncTimer = setTimeout(() => {
+                        positionSyncTimer = 0;
+                        uploadPositionToSupabase({ reason: 'position-durable', persist: true });
+                    }, Math.max(120, POSITION_SYNC_DURABLE_DELAY_MS - quietFor));
+                    return true;
+                }
+
+                const persisted = await uploadLocalDataToSupabase({
+                    reason: options.reason || 'position-durable',
+                    allowWhileListOpen: true
+                });
+                if (!persisted) throw new Error('화면 위치 영구 저장 실패');
+                if (positionSyncPendingState?.hash === outgoing.hash) persistPositionSyncPending(null);
+                else positionSyncFollowUp = true;
+                return true;
+            } catch (error) {
+                if (navigator.onLine) {
+                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
+                    positionSyncTimer = setTimeout(() => {
+                        positionSyncTimer = 0;
+                        uploadPositionToSupabase({ reason: 'position-retry' });
+                    }, 1500);
+                }
+                return false;
+            } finally {
+                positionSyncInFlight = false;
+                const deferred = deferredPositionSyncRow;
+                deferredPositionSyncRow = null;
+                if (deferred && isPositionSyncRowNewer(deferred) && !positionSyncPendingState) {
+                    setTimeout(() => applyPositionSyncRow(deferred), 0);
+                }
+                if (positionSyncFollowUp && positionSyncPendingState && navigator.onLine) {
+                    positionSyncFollowUp = false;
+                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
+                    positionSyncTimer = setTimeout(() => {
+                        positionSyncTimer = 0;
+                        uploadPositionToSupabase({ reason: 'position-follow-up' });
+                    }, 80);
+                }
+            }
+        }
+
+        async function refreshPositionSync() {
+            if (!navigator.onLine || positionSyncReadInFlight || positionSyncInFlight || document.visibilityState === 'hidden') return;
+            positionSyncPendingState ||= readPersistedPositionSyncPending();
+            if (positionSyncPendingState) {
+                const quietFor = Date.now() - Number(positionSyncPendingState.queuedAt || 0);
+                uploadPositionToSupabase({
+                    reason: 'position-poll-pending',
+                    persist: quietFor >= POSITION_SYNC_DURABLE_DELAY_MS
+                });
+            }
+        }
+
+        function startPositionSyncPolling() {
+            clearInterval(positionSyncPollTimer);
+            positionSyncPollTimer = setInterval(refreshPositionSync, 2500);
+        }
+
+        async function broadcastCurrentPositionSnapshot(kind = 'response') {
+            if (!positionSyncRealtimeReady || !positionSyncRealtimeChannel || !navigator.onLine) return false;
+            const state = normalizePositionSyncState(getCurrentPositionState());
+            if (!state) return false;
+            try {
+                const result = await positionSyncRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'position',
+                    payload: {
+                        sourceDeviceId: syncDeviceId,
+                        state,
+                        stateHash: positionStateFingerprint(state),
+                        clientUpdatedAt: new Date().toISOString(),
+                        kind
+                    }
+                });
+                const status = String(result || '').toLowerCase();
+                return !status.includes('error') && !status.includes('timed');
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async function requestLatestPositionSync() {
+            if (!positionSyncRealtimeReady || !positionSyncRealtimeChannel || positionSyncPendingState || !navigator.onLine) return false;
+            try {
+                const result = await positionSyncRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'position-request',
+                    payload: { sourceDeviceId: syncDeviceId, requestedAt: new Date().toISOString() }
+                });
+                const status = String(result || '').toLowerCase();
+                return !status.includes('error') && !status.includes('timed');
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async function startPositionSyncRealtime() {
+            if (positionSyncRealtimeChannel || !navigator.onLine) return;
+            try {
+                const client = await getSupabaseClient();
+                positionSyncRealtimeChannel = client
+                    .channel('english-card-position-broadcast-v1')
+                    .on('broadcast', {
+                        event: 'position'
+                    }, payload => {
+                        const message = payload?.payload || payload;
+                        const state = normalizePositionSyncState(message?.state);
+                        if (!state) return;
+                        applyPositionSyncRow({
+                            data: {
+                                state,
+                                sourceDeviceId: String(message.sourceDeviceId || ''),
+                                revision: 0,
+                                transport: 'broadcast',
+                                clientUpdatedAt: String(message.clientUpdatedAt || ''),
+                                broadcastKind: String(message.kind || 'action')
+                            },
+                            updated_at: new Date().toISOString()
+                        });
+                    })
+                    .on('broadcast', {
+                        event: 'position-request'
+                    }, payload => {
+                        const requester = String(payload?.payload?.sourceDeviceId || '');
+                        if (requester && requester !== syncDeviceId) broadcastCurrentPositionSnapshot('response');
+                    });
+                await new Promise(resolve => {
+                    let initialResolved = false;
+                    const resolveInitial = ready => {
+                        if (initialResolved) return;
+                        initialResolved = true;
+                        resolve(ready);
+                    };
+                    const timeoutId = setTimeout(() => resolveInitial(false), 3500);
+                    positionSyncRealtimeChannel.subscribe(status => {
+                        if (status === 'SUBSCRIBED') {
+                            positionSyncRealtimeReady = true;
+                            clearTimeout(timeoutId);
+                            resolveInitial(true);
+                            if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-realtime-ready' });
+                        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                            positionSyncRealtimeReady = false;
+                            clearTimeout(timeoutId);
+                            resolveInitial(false);
+                        }
+                    });
+                });
+            } catch (error) {
+                positionSyncRealtimeReady = false;
+                // Broadcast가 막히면 기존 주 행에 저장해 자동 동기화를 유지한다.
+            }
+        }
+
+        function stopPositionSyncRealtime() {
+            positionSyncRealtimeReady = false;
+            if (!positionSyncRealtimeChannel || !supabaseClient) return;
+            try { supabaseClient.removeChannel(positionSyncRealtimeChannel); } catch (error) {}
+            positionSyncRealtimeChannel = null;
+        }
+
+        async function initializePositionSync() {
+            if (!navigator.onLine) return false;
+            positionSyncSeenRevision = Number(safeStorageGet(POSITION_SYNC_REVISION_KEY)) || 0;
+            positionSyncSeenUpdatedAt = String(safeStorageGet(POSITION_SYNC_UPDATED_AT_KEY) || '');
+            positionSyncLastPublishedHash = String(safeStorageGet(POSITION_SYNC_HASH_KEY) || '');
+            positionSyncPendingState ||= readPersistedPositionSyncPending();
+            try {
+                await startPositionSyncRealtime();
+                if (positionSyncPendingState) {
+                    await uploadPositionToSupabase({ reason: 'position-startup-pending', persist: true });
+                } else {
+                    const row = await readMainPositionSyncRow();
+                    if (row) {
+                        await applySharedPositionFromMainRow(row, { force: true });
+                    } else {
+                        const state = normalizePositionSyncState(getCurrentPositionState());
+                        if (state) queuePositionSync(state, 0, { force: true, reason: 'position-migration' });
+                        await uploadPositionToSupabase({ reason: 'position-migration', force: true, persist: true });
+                    }
+                }
+                return true;
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function runPositionSyncInitialization() {
+            if (positionSyncInitializationPromise) return positionSyncInitializationPromise;
+            positionSyncInitializationPromise = initializePositionSync().finally(() => {
+                positionSyncInitializationPromise = null;
+            });
+            return positionSyncInitializationPromise;
+        }
+
         async function uploadLocalDataToSupabase(options = {}) {
             const manual = !!options.manual;
             if (isSupabaseSaving) {
@@ -4878,7 +5406,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 renderListModal({ force: true });
                 restoreListAfterMutation(listMutationContext);
             }
-            setTimeout(() => { isApplyingRemoteData = false; }, 0);
+            setTimeout(() => {
+                isApplyingRemoteData = false;
+                flushDeferredPositionSyncRow();
+            }, 0);
             return true;
         }
 
@@ -4910,6 +5441,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             safeStorageSet(CORRUPT_DATA_RECOVERY_KEY, '');
             setSyncBasePayload(row.data);
             setLastSupabaseUpdatedAt(row.updated_at || new Date().toISOString());
+            applySharedPositionFromMainRow(row);
             const needsUpload = syncPayloadFingerprint(buildSyncPayload()) !== syncPayloadFingerprint(row.data);
             setPendingSync(needsUpload);
             const savedTime = new Date(row.updated_at || Date.now()).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
@@ -5088,7 +5620,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const queueWhenIdle = () => {
                 const run = () => {
                     initialAutoSyncScheduled = false;
-                    runSyncInitialization();
+                    runSyncInitialization().finally(runPositionSyncInitialization);
                 };
                 if (typeof window.requestIdleCallback === 'function') {
                     window.requestIdleCallback(run, { timeout: 1200 });
@@ -5137,10 +5669,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             window.addEventListener('online', () => {
                 updateSyncStatus('온라인 복귀 · 변경사항 확인 중', 'warn');
                 setCurrentSyncCode(AUTO_SYNC_CODE);
-                runSyncInitialization();
+                runSyncInitialization().finally(runPositionSyncInitialization);
             });
             window.addEventListener('offline', () => {
                 stopSupabaseRealtime();
+                stopPositionSyncRealtime();
                 updateSyncStatus('오프라인 · 기기에 안전하게 저장됨', 'warn');
             });
             document.addEventListener('visibilitychange', () => {
@@ -5148,10 +5681,20 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     clearTimeout(syncSaveTimer);
                     uploadLocalDataToSupabase({ reason: 'visibility-hidden-flush' });
                 }
+                if (document.visibilityState === 'hidden' && navigator.onLine && positionSyncPendingState && !positionSyncInFlight) {
+                    clearTimeout(positionSyncTimer);
+                    positionSyncTimer = 0;
+                    uploadPositionToSupabase({ reason: 'position-hidden-flush', persist: true });
+                } else if (document.visibilityState === 'visible') {
+                    refreshPositionSync();
+                    setTimeout(requestLatestPositionSync, 120);
+                }
             });
 
             startSyncPolling();
+            startPositionSyncPolling();
             scheduleInitialAutoSyncData();
+            startPositionSyncRealtime();
         }
 
         function normalizeCardIdentityText(value) {
@@ -5893,6 +6436,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             saveCurrentPosition();
 
             cancelAllTts();
+            if (isApplyingRemotePosition) return;
 
             const koreanWasQueued = maybeAutoSpeakKorean(card);
             if (!koreanWasQueued && !isKoreanAutoplay && isReversed) {
@@ -6682,73 +7226,178 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return item ? `${item.emoji} ${item.label}` : '전체';
         }
 
-        function saveCurrentPositionLocally() {
-            const positionState = getCurrentPositionState();
+        function saveCurrentPositionLocally(rawState = null) {
+            const positionState = normalizePositionSyncState(rawState || getCurrentPositionState());
             if (!positionState) return null;
             safeStorageSet(POSITION_KEY, JSON.stringify(positionState));
             return positionState;
         }
 
-        function saveCurrentPosition() {
-            const positionState = saveCurrentPositionLocally();
-            if (!positionState) return;
+        function saveCurrentPosition(options = {}) {
+            const positionState = saveCurrentPositionLocally(options.state || null);
+            if (!positionState) return null;
+            if (!isApplyingRemotePosition && !isApplyingRemoteData && appHasFinishedInitialRender) {
+                queuePositionSync(positionState, options.delayMs ?? 180, {
+                    reason: options.reason || 'position'
+                });
+            }
+            return positionState;
         }
 
         let listPositionSaveTimer = 0;
+        let suppressListPositionSyncUntil = 0;
         function scheduleListPositionSave(delayMs = 100) {
             if (listPositionSaveTimer) clearTimeout(listPositionSaveTimer);
             listPositionSaveTimer = setTimeout(() => {
                 listPositionSaveTimer = 0;
-                saveCurrentPositionLocally();
+                if (Date.now() < suppressListPositionSyncUntil) {
+                    saveCurrentPositionLocally();
+                    return;
+                }
+                saveCurrentPosition({ delayMs: 220, reason: 'list-position' });
             }, Math.max(0, Number(delayMs) || 0));
+        }
+
+        function applyPositionStateValues(rawState) {
+            const state = normalizePositionSyncState(rawState);
+            if (!state) return null;
+
+            bookmarkDifficultyFilter = normalizeDifficultyFilter(state.bookmarkDifficultyFilter);
+            const wantsBookmarks = state.isFilterMode || state.activeStudyCategory === 'bookmark';
+            if (wantsBookmarks) {
+                currentList = getBookmarkedCards();
+                activeStudyCategory = 'bookmark';
+                isFilterMode = true;
+            } else if (categoryMeta.some(category => category.key === state.activeStudyCategory)) {
+                activeStudyCategory = state.activeStudyCategory;
+                currentList = getCategoryCards(activeStudyCategory);
+                isFilterMode = false;
+            } else {
+                activeStudyCategory = 'all';
+                currentList = getCategoryCards('all');
+                isFilterMode = false;
+            }
+
+            activeListCategory = categoryMeta.some(category => category.key === state.activeListCategory)
+                ? state.activeListCategory
+                : 'all';
+            isListBookmarkMode = !!state.isListBookmarkMode;
+            listHideEnglish = !!state.listHideEnglish;
+            listHideKorean = !!state.listHideKorean;
+            isReversed = !!state.isReversed;
+            isKoreanAutoplay = !!state.isKoreanAutoplay;
+            lastKoreanAutoReadCardKey = '';
+            // 섞인 실제 카드 배열은 저장하지 않으므로 복원 시에는 정렬 상태로 맞춘다.
+            isShuffleActive = false;
+
+            let savedIndex = state.cardKey
+                ? currentList.findIndex(card => cardStableKey(card) === state.cardKey)
+                : -1;
+            if (savedIndex < 0) savedIndex = currentList.findIndex(card => card.originalIdx === state.originalIdx);
+            currentIndex = savedIndex >= 0
+                ? savedIndex
+                : Math.min(currentIndex, Math.max(currentList.length - 1, 0));
+
+            setBookmarkFilterButtonState(isFilterMode);
+            updateAddButtonVisibility();
+            updateBookmarkDifficultyFilterControls();
+            updateActionButtonStates();
+            return state;
+        }
+
+        async function applyRemotePositionState(rawState) {
+            const state = normalizePositionSyncState(rawState);
+            if (!state) return false;
+            const currentState = normalizePositionSyncState(getCurrentPositionState());
+            if (currentState && positionStateFingerprint(currentState) === positionStateFingerprint(state)) {
+                saveCurrentPositionLocally(state);
+                return false;
+            }
+
+            const listModal = document.getElementById('list-modal');
+            const listContainer = document.getElementById('list-container');
+            const appShell = document.getElementById('app-shell');
+            const listWasOpen = !!listModal && !listModal.classList.contains('hidden');
+            const previousListCategory = activeListCategory;
+            const previousListBookmarkMode = isListBookmarkMode;
+            const previousBookmarkDifficulty = bookmarkDifficultyFilter;
+            const previousHideEnglish = listHideEnglish;
+            const previousHideKorean = listHideKorean;
+
+            isApplyingRemotePosition = true;
+            try {
+                if (isAutoplay) {
+                    isAutoplay = false;
+                    clearTimeout(autoplayTimer);
+                }
+                applyPositionStateValues(state);
+                shouldRestoreListModal = false;
+                restoredListScrollTop = 0;
+                restoredListScrollAnchor = null;
+                renderCard();
+
+                if (state.isListOpen && listModal) {
+                    suppressListPositionSyncUntil = Date.now() + 2000;
+                    appShell?.classList.add('list-modal-open');
+                    listModal.classList.remove('hidden');
+                    const listScopeChanged = !listWasOpen
+                        || previousListCategory !== activeListCategory
+                        || previousListBookmarkMode !== isListBookmarkMode
+                        || (isListBookmarkMode && previousBookmarkDifficulty !== bookmarkDifficultyFilter)
+                        || !listRenderState;
+                    if (listScopeChanged) renderListModal();
+                    else if (previousHideEnglish !== listHideEnglish || previousHideKorean !== listHideKorean) {
+                        applyFastListVisibility();
+                        updateListHideButtons();
+                    }
+
+                    const anchor = normalizePersistedListScrollAnchor(state.listScrollAnchor);
+                    lastListScrollAnchor = anchor;
+                    requestAnimationFrame(() => {
+                        if (listModal.classList.contains('hidden')) return;
+                        if (anchor) restoreListScrollAnchor(anchor, { suppressSync: true });
+                        else if (listContainer) {
+                            cancelListScrollRestore();
+                            listContainer.scrollTop = state.listScrollTop;
+                            suppressListPositionSyncUntil = Date.now() + 500;
+                            saveCurrentPositionLocally(state);
+                        }
+                    });
+                } else if (listModal) {
+                    clearListSentenceSearch();
+                    listSearchJumpId += 1;
+                    settleListRenderWaiters(listRenderState, null);
+                    cancelListScrollRestore();
+                    endListDrag();
+                    endCategoryDrag();
+                    isListEditMode = false;
+                    appShell?.classList.remove('list-modal-open');
+                    listModal.classList.add('hidden');
+                    lastListScrollAnchor = normalizePersistedListScrollAnchor(state.listScrollAnchor);
+                    flushDeferredSyncAfterListClose();
+                }
+
+                saveCurrentPositionLocally(state);
+                return true;
+            } finally {
+                setTimeout(() => {
+                    isApplyingRemotePosition = false;
+                    flushDeferredPositionSyncRow();
+                }, 360);
+            }
         }
 
         function restoreLastPosition() {
             const raw = safeStorageGet(POSITION_KEY);
             if (!raw) return;
             try {
-                const state = JSON.parse(raw);
+                const state = normalizePositionSyncState(JSON.parse(raw));
                 if (!state) return;
-
-                bookmarkDifficultyFilter = normalizeDifficultyFilter(state.bookmarkDifficultyFilter);
-
-                if (state.isFilterMode || state.activeStudyCategory === 'bookmark') {
-                    const bookmarkedCards = getBookmarkedCards();
-                    if (bookmarkedCards.length) {
-                        currentList = bookmarkedCards;
-                        activeStudyCategory = 'bookmark';
-                        isFilterMode = true;
-                        document.getElementById('bookmark-filter-btn').classList.remove('bg-slate-50');
-                        document.getElementById('bookmark-filter-btn').classList.add('bg-yellow-100');
-                    }
-                } else if (state.activeStudyCategory && categoryMeta.some(c => c.key === state.activeStudyCategory)) {
-                    activeStudyCategory = state.activeStudyCategory;
-                    currentList = getCategoryCards(activeStudyCategory);
-                } else {
-                    activeStudyCategory = 'all';
-                    currentList = getCategoryCards('all');
-                }
-
-                if (state.activeListCategory && categoryMeta.some(c => c.key === state.activeListCategory)) {
-                    activeListCategory = state.activeListCategory;
-                }
-
-                isListBookmarkMode = !!state.isListBookmarkMode;
-                listHideEnglish = !!state.listHideEnglish;
-                listHideKorean = !!state.listHideKorean;
+                applyPositionStateValues(state);
                 shouldRestoreListModal = !!state.isListOpen;
                 restoredListScrollTop = Number(state.listScrollTop) || 0;
                 lastListScrollAnchor = normalizePersistedListScrollAnchor(state.listScrollAnchor);
                 restoredListScrollAnchor = lastListScrollAnchor;
-                isReversed = !!state.isReversed;
-                isKoreanAutoplay = !!state.isKoreanAutoplay;
-                lastKoreanAutoReadCardKey = '';
-                isShuffleActive = !!state.isShuffleActive;
-
-                const savedIdx = currentList.findIndex(card => card.originalIdx === state.originalIdx);
-                if (savedIdx >= 0) currentIndex = savedIdx;
-                else currentIndex = Math.min(currentIndex, Math.max(currentList.length - 1, 0));
-                updateActionButtonStates();
             } catch (e) {
                 // 저장된 위치 정보가 깨졌으면 그냥 첫 문장부터 시작함.
             }
@@ -7358,6 +8007,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function normalizePersistedListScrollAnchor(anchor) {
             if (!anchor || !anchor.rowKey) return null;
             const viewportTop = Number(anchor.viewportTop);
+            const containerOffset = anchor.containerOffset === null || anchor.containerOffset === undefined || anchor.containerOffset === ''
+                ? NaN
+                : Number(anchor.containerOffset);
             const scrollTops = Array.isArray(anchor.scrollTops)
                 ? anchor.scrollTops.map(value => Number(value) || 0)
                 : (Array.isArray(anchor.scrollStates)
@@ -7366,6 +8018,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return {
                 rowKey: String(anchor.rowKey),
                 viewportTop: Number.isFinite(viewportTop) ? viewportTop : 0,
+                containerOffset: Number.isFinite(containerOffset) ? containerOffset : null,
                 scrollTops
             };
         }
@@ -7380,9 +8033,13 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const container = document.getElementById('list-container');
             if (!container) return null;
             const targets = getListScrollTargets(container);
+            const containerRect = container.getBoundingClientRect();
+            const viewportTop = Number.isFinite(saved.containerOffset)
+                ? containerRect.top + saved.containerOffset
+                : saved.viewportTop;
             return {
                 rowKey: saved.rowKey,
-                viewportTop: saved.viewportTop,
+                viewportTop,
                 scrollStates: targets.map((target, index) => ({
                     target,
                     scrollTop: Number(saved.scrollTops[index]) || 0
@@ -7411,6 +8068,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return {
                 rowKey: anchorRow?.dataset.listRowKey || '',
                 viewportTop: anchorRect ? anchorRect.top : visibleTop,
+                containerOffset: anchorRect ? anchorRect.top - containerRect.top : visibleTop - containerRect.top,
                 scrollStates: getListScrollTargets(container).map(target => ({
                     target,
                     scrollTop: target.scrollTop
@@ -7426,7 +8084,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             isRestoringListScrollAnchor = false;
         }
 
-        async function restoreListScrollAnchor(anchor) {
+        async function restoreListScrollAnchor(anchor, options = {}) {
             const savedAnchor = normalizePersistedListScrollAnchor(anchor);
             cancelListScrollRestore();
             if (!savedAnchor) return;
@@ -7480,7 +8138,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 cleanup();
                 if (restoreId !== listScrollAnchorRestoreId) return;
                 isRestoringListScrollAnchor = false;
-                saveCurrentPositionLocally();
+                if (options.suppressSync || isApplyingRemotePosition) {
+                    suppressListPositionSyncUntil = Date.now() + 500;
+                    saveCurrentPositionLocally();
+                }
+                else saveCurrentPosition({ delayMs: 220, reason: 'list-restore' });
             };
             const alignAnchor = () => {
                 if (restoreId !== listScrollAnchorRestoreId) {
@@ -8424,7 +9086,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     if (rawRestoreId !== listScrollAnchorRestoreId || modal.classList.contains('hidden')) return;
                     isRestoringListScrollAnchor = false;
                     if (container) container.scrollTop = scrollToRestore;
-                    saveCurrentPositionLocally();
+                    if (isApplyingRemotePosition) saveCurrentPositionLocally();
+                    else saveCurrentPosition({ delayMs: 180, reason: 'list-open' });
                 }
             });
         }
@@ -8840,13 +9503,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         });
         function handleListViewportScroll() {
             const modal = document.getElementById('list-modal');
-            if (!modal || modal.classList.contains('hidden') || isRestoringListScrollAnchor) return;
+            if (!modal || modal.classList.contains('hidden') || isRestoringListScrollAnchor || Date.now() < suppressListPositionSyncUntil) return;
             scheduleListPositionSave(160);
         }
         const listViewportElement = document.getElementById('list-container');
         const cancelListRestoreForUserInput = () => {
             const modal = document.getElementById('list-modal');
-            if (!modal || modal.classList.contains('hidden') || !isRestoringListScrollAnchor) return;
+            if (!modal || modal.classList.contains('hidden')) return;
+            suppressListPositionSyncUntil = 0;
+            if (!isRestoringListScrollAnchor) return;
             cancelListScrollRestore();
         };
         ['pointerdown', 'touchstart', 'wheel'].forEach(eventName => {
@@ -8860,7 +9525,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 clearTimeout(listPositionSaveTimer);
                 listPositionSaveTimer = 0;
             }
-            saveCurrentPositionLocally();
+            saveCurrentPosition({ delayMs: 0, reason: 'position-leave' });
         };
         window.addEventListener('pagehide', savePositionBeforeLeaving);
         window.addEventListener('beforeunload', savePositionBeforeLeaving);
