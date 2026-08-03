@@ -220,11 +220,6 @@
             #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-text-value { display: none; }
             #list-container > [data-list-row-key].list-row-hide-en [data-list-text-language="en"] .list-hidden-placeholder,
             #list-container > [data-list-row-key].list-row-hide-ko [data-list-text-language="ko"] .list-hidden-placeholder { display: inline; }
-            #list-container > [data-list-row-key] {
-                content-visibility: auto;
-                contain: layout style paint;
-                contain-intrinsic-size: auto 72px;
-            }
         }
         body.dark #list-modal { background-color: rgba(15, 23, 42, 0.96) !important; border-color: #334155 !important; }
         body.dark #list-modal .border-slate-200, body.dark #list-modal .border-slate-100 { border-color: #334155 !important; }
@@ -434,6 +429,9 @@
             touch-action: pan-y;
             scrollbar-width: thin;
             scrollbar-color: #c7d2fe transparent;
+        }
+        @media (max-width: 640px) {
+            #category-container { height: 154px !important; }
         }
 
         /* 대분류와 문장 목록의 세로 스크롤바 디자인 통일 */
@@ -3246,7 +3244,7 @@ body.dark #next-btn:disabled span {
             <div id="sentence-search-results" class="sentence-search-results hidden"></div>
         </div>
 
-        <div id="sync-panel" class="sync-panel" data-state="warn">
+        <div id="sync-panel" class="sync-panel hidden" data-state="warn" hidden aria-hidden="true">
             <div class="sync-compact-row">
                 <span class="sync-indicator" aria-hidden="true"></span>
                 <span id="sync-status" class="sync-status" data-state="warn" role="status" aria-live="polite">동기화 준비 중</span>
@@ -3586,6 +3584,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let syncDeviceId = '';
         let currentSyncConflicts = [];
         let localDataRecoveryRequired = false;
+        let deferredSupabaseRowWhileListOpen = null;
+        let deferredSupabaseOptionsWhileListOpen = null;
 
 
         const memoryStorageFallback = {};
@@ -3816,6 +3816,47 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (panel) panel.dataset.state = state;
         }
 
+        function isListModalCurrentlyOpen() {
+            const modal = document.getElementById('list-modal');
+            return !!modal && !modal.classList.contains('hidden');
+        }
+
+        function deferSupabaseRowUntilListClose(row, options = {}) {
+            if (!row || !row.data) return false;
+            const incomingTime = Date.parse(row.updated_at || '') || 0;
+            const savedTime = Date.parse(deferredSupabaseRowWhileListOpen?.updated_at || '') || 0;
+            if (!deferredSupabaseRowWhileListOpen || incomingTime >= savedTime) {
+                deferredSupabaseRowWhileListOpen = row;
+                deferredSupabaseOptionsWhileListOpen = {
+                    silent: true,
+                    preserveView: options.preserveView !== false,
+                    revisionBeforeRead: options.revisionBeforeRead
+                };
+            }
+            setPendingSync(true);
+            updateSyncStatus('목록 사용 중 · 닫으면 동기화 반영', 'warn');
+            return true;
+        }
+
+        function flushDeferredSyncAfterListClose() {
+            if (isListModalCurrentlyOpen()) return;
+            const deferredRow = deferredSupabaseRowWhileListOpen;
+            const deferredOptions = deferredSupabaseOptionsWhileListOpen;
+            deferredSupabaseRowWhileListOpen = null;
+            deferredSupabaseOptionsWhileListOpen = null;
+            if (deferredRow) {
+                setTimeout(() => applySupabaseRow(deferredRow, {
+                    ...(deferredOptions || {}),
+                    allowWhileListOpen: true,
+                    silent: true
+                }), 0);
+                return;
+            }
+            if (hasPendingSync() && navigator.onLine && !isSupabaseSaving) {
+                queueSupabaseSave('list-close-flush', 80);
+            }
+        }
+
         function getSyncInputCode() {
             return AUTO_SYNC_CODE;
         }
@@ -3896,8 +3937,21 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             };
         }
 
+        function canonicalSyncValue(value) {
+            if (Array.isArray(value)) return value.map(canonicalSyncValue);
+            if (value && typeof value === 'object') {
+                const result = {};
+                Object.keys(value).sort().forEach(key => {
+                    const next = canonicalSyncValue(value[key]);
+                    if (next !== undefined) result[key] = next;
+                });
+                return result;
+            }
+            return value;
+        }
+
         function syncComparable(value) {
-            return JSON.stringify([value]);
+            return JSON.stringify([canonicalSyncValue(value)]);
         }
 
         function syncValuesEqual(left, right) {
@@ -4189,7 +4243,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function syncPayloadFingerprint(payload) {
             const normalized = normalizeSyncPayload(payload);
-            return simpleCardHash(JSON.stringify({
+            return simpleCardHash(syncComparable({
                 cards: normalized.cards.map(canonicalSyncCard),
                 order: normalized.cardOrder,
                 deleted: Array.from(normalized.deletedKeys).sort(),
@@ -4608,6 +4662,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 if (manual) showToast('원격 백업을 먼저 확인합니다.');
                 return false;
             }
+            if (isListModalCurrentlyOpen() && !options.allowWhileListOpen) {
+                setPendingSync(true);
+                updateSyncStatus('목록 사용 중 · 닫으면 동기화 저장', 'warn');
+                return false;
+            }
 
             let shouldFollowUpUpload = false;
             try {
@@ -4669,6 +4728,14 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 }
 
                 if (!savedRow || !savedPayload || !successfulLocalPayload) throw new Error('다른 기기의 저장과 겹쳐 다시 시도해야 합니다.');
+                if (isListModalCurrentlyOpen() && !options.allowWhileListOpen) {
+                    deferSupabaseRowUntilListClose(savedRow, {
+                        preserveView: true,
+                        revisionBeforeRead: uploadRevision
+                    });
+                    shouldFollowUpUpload = false;
+                    return true;
+                }
                 setLastSupabaseUpdatedAt(savedRow.updated_at);
 
                 const changedWhileSaving = syncNeedsFollowUpUpload || localChangeRevision !== uploadRevision;
@@ -4813,7 +4880,18 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const nextLocalPayload = hasUnsavedLocal
                 ? mergeSyncPayloads(getSafeSyncMergeBase(basePayload, localPayload, row.data), localPayload, row.data).payload
                 : row.data;
-            applySyncPayloadToLocalState(nextLocalPayload, { preserveView: options.preserveView !== false, source: hasUnsavedLocal ? 'remote-rebase' : 'remote' });
+            const localFingerprint = syncPayloadFingerprint(localPayload);
+            const nextFingerprint = syncPayloadFingerprint(nextLocalPayload);
+            const hasVisibleStateChange = localDataRecoveryRequired || localFingerprint !== nextFingerprint;
+            if (hasVisibleStateChange && isListModalCurrentlyOpen() && !options.allowWhileListOpen) {
+                return deferSupabaseRowUntilListClose(row, options);
+            }
+            if (hasVisibleStateChange) {
+                applySyncPayloadToLocalState(nextLocalPayload, { preserveView: options.preserveView !== false, source: hasUnsavedLocal ? 'remote-rebase' : 'remote' });
+            } else {
+                currentSyncConflicts = Array.isArray(nextLocalPayload.syncConflicts) ? nextLocalPayload.syncConflicts.slice(-40) : [];
+                syncConflictCount = currentSyncConflicts.length;
+            }
             localDataRecoveryRequired = false;
             safeStorageSet(CORRUPT_DATA_RECOVERY_KEY, '');
             setSyncBasePayload(row.data);
@@ -5024,8 +5102,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             setCurrentSyncCode(AUTO_SYNC_CODE);
             const panel = document.getElementById('sync-panel');
             if (panel) {
-                panel.classList.remove('hidden');
-                panel.style.removeProperty('display');
+                // 자동 동기화는 계속 실행하되 복구용 도구 열은 메인 화면을 차지하지 않는다.
+                panel.hidden = true;
+                panel.classList.add('hidden');
+                panel.setAttribute('aria-hidden', 'true');
             }
             updateSyncStatus(
                 localDataRecoveryRequired
@@ -7379,7 +7459,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             let pass = 0;
             let stablePasses = 0;
-            const maxPasses = 14;
+            // 행 높이가 안정된 후에는 오래 보정할 필요가 없다.
+            // 여러 프레임 강제 보정은 모바일 관성 스크롤과 충돌할 수 있다.
+            const maxPasses = 4;
             const finishRestore = () => {
                 cleanup();
                 if (restoreId !== listScrollAnchorRestoreId) return;
@@ -8166,12 +8248,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     state.complete = true;
                     container.setAttribute('aria-busy', 'false');
                 }
-                if (mobileViewport) scheduleMobileListVisibility(container);
             };
             state.renderBatch = renderBatch;
-            const initialCount = Math.min(list.length, mobileViewport ? 18 : 72);
+            const initialCount = Math.min(list.length, mobileViewport ? 48 : 72);
             renderBatch(0, initialCount);
-            if (!state.complete) scheduleListRenderWork(state, true);
+            if (!state.complete && !mobileViewport) scheduleListRenderWork(state, false);
         }
 
         function settleListRenderWaiters(state, value = null) {
@@ -8214,15 +8295,18 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     return;
                 }
                 state.paused = false;
-                const batchSize = state.mobileViewport ? 16 : 72;
-                const maximumBatchSize = state.mobileViewport ? 20 : 90;
+                const batchSize = state.mobileViewport ? 48 : 72;
+                const maximumBatchSize = state.mobileViewport ? 64 : 90;
                 let endIndex = Math.min(state.list.length, state.nextIndex + batchSize);
                 if (state.priorityThrough >= state.nextIndex) {
                     endIndex = Math.min(state.list.length, Math.max(endIndex, state.priorityThrough + 1));
                 }
                 endIndex = Math.min(endIndex, state.nextIndex + maximumBatchSize);
                 state.renderBatch(state.nextIndex, endIndex);
-                if (!state.complete) scheduleListRenderWork(state, state.priorityThrough >= state.nextIndex);
+                const hasPriority = state.priorityThrough >= state.nextIndex;
+                if (!state.complete && (!state.mobileViewport || hasPriority)) {
+                    scheduleListRenderWork(state, hasPriority);
+                }
             };
             if (urgent || state.priorityThrough >= state.nextIndex) {
                 state.scheduleKind = 'raf';
@@ -8350,6 +8434,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             isListEditMode = false;
             document.getElementById('list-modal').classList.add('hidden');
             saveCurrentPosition();
+            flushDeferredSyncAfterListClose();
         }
 
         function restoreListModalIfNeeded() {
@@ -8744,7 +8829,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!modal || modal.classList.contains('hidden') || isRestoringListScrollAnchor) return;
             scheduleListPositionSave(160);
         }
-        document.getElementById('list-container').addEventListener('scroll', handleListViewportScroll, { passive: true });
+        const listViewportElement = document.getElementById('list-container');
+        const cancelListRestoreForUserInput = () => {
+            const modal = document.getElementById('list-modal');
+            if (!modal || modal.classList.contains('hidden') || !isRestoringListScrollAnchor) return;
+            cancelListScrollRestore();
+        };
+        ['pointerdown', 'touchstart', 'wheel'].forEach(eventName => {
+            listViewportElement.addEventListener(eventName, cancelListRestoreForUserInput, { passive: true });
+        });
+        listViewportElement.addEventListener('scroll', handleListViewportScroll, { passive: true });
         document.getElementById('app-shell')?.addEventListener('scroll', handleListViewportScroll, { passive: true });
         window.addEventListener('scroll', handleListViewportScroll, { passive: true });
         const savePositionBeforeLeaving = () => {
