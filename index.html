@@ -3779,6 +3779,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let listRandomScopeKey = '';
         const listRowRevealSet = new Set();
         const MAX_PERSISTED_LIST_REVEALS = 5000;
+        let listRevealStates = {};
         function normalizeListRowRevealKeys(value) {
             if (!Array.isArray(value)) return [];
             const unique = [];
@@ -3792,12 +3793,123 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
             return unique;
         }
-        function restoreListRowRevealKeys(value) {
+        function normalizeListRevealStateMap(value, legacyKeys = []) {
+            const normalized = {};
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                Object.entries(value).forEach(([rawKey, rawState]) => {
+                    const key = String(rawKey || '').trim();
+                    if (!key) return;
+                    const source = rawState && typeof rawState === 'object'
+                        ? rawState
+                        : { revealed: !!rawState };
+                    normalized[key] = {
+                        revealed: !!source.revealed,
+                        updatedAt: Math.max(0, Math.floor(Number(source.updatedAt) || 0)),
+                        deviceId: String(source.deviceId || '')
+                    };
+                });
+            }
+            normalizeListRowRevealKeys(legacyKeys).forEach(key => {
+                if (!normalized[key]) normalized[key] = { revealed: true, updatedAt: 1, deviceId: 'legacy' };
+            });
+            const entries = Object.entries(normalized);
+            if (entries.length <= MAX_PERSISTED_LIST_REVEALS) return normalized;
+            entries.sort((a, b) => {
+                const timeDiff = Number(b[1]?.updatedAt || 0) - Number(a[1]?.updatedAt || 0);
+                if (timeDiff) return timeDiff;
+                return String(b[0]).localeCompare(String(a[0]));
+            });
+            return Object.fromEntries(entries.slice(0, MAX_PERSISTED_LIST_REVEALS));
+        }
+        function compareListRevealState(left, right) {
+            const a = left && typeof left === 'object' ? left : { revealed: !!left };
+            const b = right && typeof right === 'object' ? right : { revealed: !!right };
+            const aTime = Math.max(0, Math.floor(Number(a.updatedAt) || 0));
+            const bTime = Math.max(0, Math.floor(Number(b.updatedAt) || 0));
+            if (aTime !== bTime) return aTime > bTime ? 1 : -1;
+            const aDevice = String(a.deviceId || '');
+            const bDevice = String(b.deviceId || '');
+            if (aDevice !== bDevice) return aDevice > bDevice ? 1 : -1;
+            if (!!a.revealed === !!b.revealed) return 0;
+            return a.revealed ? 1 : -1;
+        }
+        function mergeListRevealStateMaps(...values) {
+            const merged = {};
+            values.forEach(value => {
+                const source = normalizeListRevealStateMap(value);
+                Object.entries(source).forEach(([key, state]) => {
+                    if (!merged[key] || compareListRevealState(state, merged[key]) >= 0) merged[key] = state;
+                });
+            });
+            return normalizeListRevealStateMap(merged);
+        }
+        function getRevealedRowKeysFromStateMap(value = listRevealStates) {
+            return Object.entries(normalizeListRevealStateMap(value))
+                .filter(([, state]) => !!state.revealed)
+                .map(([key]) => key);
+        }
+        function listRevealStateFingerprint(value = listRevealStates) {
+            const normalized = normalizeListRevealStateMap(value);
+            const ordered = {};
+            Object.keys(normalized).sort().forEach(key => { ordered[key] = normalized[key]; });
+            return JSON.stringify(ordered);
+        }
+        function refreshRenderedListRevealStates() {
+            const container = document.getElementById('list-container');
+            if (!container) return;
+            container.querySelectorAll('[data-list-row-key]').forEach(row => {
+                const rowKey = String(row.dataset.listRowKey || '');
+                const revealed = listRowRevealSet.has(rowKey);
+                if (revealed) row.dataset.listRowRevealed = 'true';
+                else row.removeAttribute('data-list-row-revealed');
+                const button = row.querySelector('.list-study-toggle-btn');
+                if (button) button.textContent = revealed
+                    ? getUiButtonLabel('hide', '숨김')
+                    : getUiButtonLabel('sentence', '문장');
+            });
+        }
+        function applyListRevealStateMap(value, legacyKeys = [], options = {}) {
+            const incoming = normalizeListRevealStateMap(value, legacyKeys);
+            listRevealStates = options.replace
+                ? incoming
+                : mergeListRevealStateMaps(listRevealStates, incoming);
             listRowRevealSet.clear();
             const validRowKeys = new Set(cards.map(card => getListRowKey(card)));
-            normalizeListRowRevealKeys(value).forEach(key => {
+            getRevealedRowKeysFromStateMap(listRevealStates).forEach(key => {
                 if (validRowKeys.has(key)) listRowRevealSet.add(key);
             });
+            return listRevealStates;
+        }
+        function restoreListRowRevealKeys(value, revealStateMap = null, options = {}) {
+            return applyListRevealStateMap(revealStateMap, value, options);
+        }
+        function setListRowRevealState(rowKey, revealed) {
+            const key = String(rowKey || '').trim();
+            if (!key) return false;
+            const previous = listRevealStates[key];
+            const maxKnownTime = Object.values(listRevealStates).reduce(
+                (max, state) => Math.max(max, Number(state?.updatedAt) || 0),
+                0
+            );
+            const updatedAt = Math.max(Date.now(), maxKnownTime + 1, Number(previous?.updatedAt || 0) + 1);
+            listRevealStates = normalizeListRevealStateMap({
+                ...listRevealStates,
+                [key]: { revealed: !!revealed, updatedAt, deviceId: String(syncDeviceId || '') }
+            });
+            if (revealed) listRowRevealSet.add(key);
+            else listRowRevealSet.delete(key);
+            return true;
+        }
+        function clearListRowRevealStates(options = {}) {
+            const keys = [...listRowRevealSet];
+            if (!keys.length) return false;
+            if (options.record === false) {
+                listRowRevealSet.clear();
+                if (options.resetMap) listRevealStates = {};
+                return true;
+            }
+            keys.forEach(key => setListRowRevealState(key, false));
+            return true;
         }
         let lastListScrollAnchor = null;
         let listDragState = null;
@@ -3811,6 +3923,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let lastDeletedSnapshot = null;
         let uiConfigUpdatedAt = 0;
         const POSITION_KEY = STORAGE_KEY + '_last_position_v1';
+        const LIST_REVEAL_STATE_KEY = STORAGE_KEY + '_list_reveal_states_v2';
         const DARK_MODE_KEY = STORAGE_KEY + '_dark_mode_v1';
         const TTS_VOICE_KEY = STORAGE_KEY + '_tts_voice_v1';
         const SYNC_CODE_KEY = STORAGE_KEY + '_supabase_sync_code_v1';
@@ -4219,6 +4332,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 bookmarkDifficultyFilter,
                 listHideEnglish,
                 listHideKorean,
+                listRevealStates: normalizeListRevealStateMap(listRevealStates),
                 listRevealedRowKeys: normalizeListRowRevealKeys([...listRowRevealSet]),
                 listScrollTop,
                 // modal을 막 닫은 순간에도 DOM에는 마지막 scrollTop이 남아 있으므로 항상 실측값을 우선한다.
@@ -4293,6 +4407,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 // 서로 다른 UI 설정 변경을 필드별로 병합할 수 있게 빈 객체로 정규화한다.
                 uiConfig: getPayloadUiConfig(source) || {},
                 uiConfigUpdatedAt: Number(source.uiConfigUpdatedAt) || 0,
+                listRevealStates: normalizeListRevealStateMap(
+                    source.listRevealStates,
+                    source.listRevealedRowKeys || getPayloadPosition(source)?.listRevealedRowKeys || []
+                ),
                 syncConflicts: Array.isArray(source.syncConflicts) ? source.syncConflicts : [],
                 syncRevision: Number(source.syncRevision) || 0,
                 positionsByDevice: source.positionsByDevice && typeof source.positionsByDevice === 'object' ? { ...source.positionsByDevice } : {},
@@ -4475,11 +4593,30 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 );
             });
             const mergedUiConfig = mergeSyncSection('uiConfig', base.uiConfig, local.uiConfig, remote.uiConfig, conflicts);
-            const mergedSharedPosition = selectLatestPositionSyncEnvelope([
+            const mergedListRevealStates = mergeListRevealStateMaps(
+                base.listRevealStates,
+                local.listRevealStates,
+                remote.listRevealStates
+            );
+            let mergedSharedPosition = selectLatestPositionSyncEnvelope([
                 getSharedPositionEnvelope(basePayload),
                 getSharedPositionEnvelope(localPayload),
                 getSharedPositionEnvelope(remotePayload)
             ]);
+            if (mergedSharedPosition) {
+                const mergedPositionState = normalizePositionSyncState({
+                    ...mergedSharedPosition.state,
+                    listRevealStates: mergeListRevealStateMaps(
+                        mergedListRevealStates,
+                        mergedSharedPosition.state?.listRevealStates
+                    )
+                });
+                mergedSharedPosition = {
+                    ...mergedSharedPosition,
+                    state: mergedPositionState,
+                    stateHash: positionStateFingerprint(mergedPositionState)
+                };
+            }
             const mergedPositionsByDevice = { ...base.positionsByDevice, ...remote.positionsByDevice, ...local.positionsByDevice };
             if (mergedSharedPosition?.sourceDeviceId) {
                 mergedPositionsByDevice[mergedSharedPosition.sourceDeviceId] = serializePositionStateForDevice(mergedSharedPosition);
@@ -4496,7 +4633,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const merged = {
                 ...remotePayload,
                 ...localPayload,
-                schemaVersion: 2,
+                schemaVersion: 3,
                 app: 'english-card',
                 [STORAGE_KEY]: mergedCards,
                 cards: mergedCards,
@@ -4507,6 +4644,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 [UI_CONFIG_KEY]: mergedUiConfig,
                 uiConfig: mergedUiConfig,
                 uiConfigUpdatedAt: Math.max(base.uiConfigUpdatedAt, local.uiConfigUpdatedAt, remote.uiConfigUpdatedAt),
+                listRevealStates: mergedListRevealStates,
+                listRevealedRowKeys: getRevealedRowKeysFromStateMap(mergedListRevealStates),
                 positionsByDevice: mergedPositionsByDevice,
                 sharedPosition: mergedSharedPosition,
                 syncRevision: Math.max(base.syncRevision, local.syncRevision, remote.syncRevision) + 1,
@@ -4551,7 +4690,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 cards: normalized.cards.map(canonicalSyncCard),
                 order: normalized.cardOrder,
                 deleted: Array.from(normalized.deletedKeys).sort(),
-                uiConfig: normalized.uiConfig
+                uiConfig: normalized.uiConfig,
+                listRevealStates: normalized.listRevealStates
             }));
         }
 
@@ -4561,6 +4701,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             safeStorageSet(CARD_TOMBSTONES_KEY, JSON.stringify(deletedCardTimestamps));
             safeStorageSet(UI_CONFIG_KEY, JSON.stringify(uiConfig));
             safeStorageSet(UI_CONFIG_UPDATED_KEY, String(uiConfigUpdatedAt || 0));
+            safeStorageSet(LIST_REVEAL_STATE_KEY, JSON.stringify(normalizeListRevealStateMap(listRevealStates)));
             safeStorageSet(DATA_VERSION_KEY, embeddedDataVersion);
             safeStorageSet(DARK_MODE_KEY, document.body.classList.contains('dark') ? '1' : '0');
             if (options.position !== false) {
@@ -4589,7 +4730,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
             const orderedCards = cards.slice().sort((a, b) => Number(a.originalIdx) - Number(b.originalIdx));
             return {
-                schemaVersion: 2,
+                schemaVersion: 3,
                 app: 'english-card',
                 deviceId: syncDeviceId,
                 storageKey: STORAGE_KEY,
@@ -4610,6 +4751,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 [UI_CONFIG_KEY]: uiConfig,
                 uiConfig,
                 uiConfigUpdatedAt,
+                listRevealStates: normalizeListRevealStateMap(listRevealStates),
+                listRevealedRowKeys: normalizeListRowRevealKeys([...listRowRevealSet]),
                 [DATA_VERSION_KEY]: embeddedDataVersion,
                 positionsByDevice,
                 sharedPosition,
@@ -4623,7 +4766,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function buildPortableBackup(reason = 'manual') {
             return {
                 format: 'english-card-backup',
-                schemaVersion: 2,
+                schemaVersion: 3,
                 createdAt: new Date().toISOString(),
                 reason,
                 sourceEmbeddedVersion: embeddedDataVersion,
@@ -4632,6 +4775,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 cardTombstones: { ...deletedCardTimestamps },
                 uiConfig: clonePlainObject(uiConfig),
                 uiConfigUpdatedAt,
+                listRevealStates: normalizeListRevealStateMap(listRevealStates),
+                listRevealedRowKeys: normalizeListRowRevealKeys([...listRowRevealSet]),
                 position: getCurrentPositionState(),
                 darkMode: document.body.classList.contains('dark'),
                 ttsVoice: selectedNativeTtsVoiceId,
@@ -4772,6 +4917,13 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     : (getPayloadDeletedCardIdentities(value) || []),
                 cardTombstones: value.cardTombstones && typeof value.cardTombstones === 'object' ? value.cardTombstones : {},
                 uiConfig: value.uiConfig || getPayloadUiConfig(value) || uiConfig,
+                listRevealStates: normalizeListRevealStateMap(
+                    value.listRevealStates,
+                    value.listRevealedRowKeys || value.position?.listRevealedRowKeys || []
+                ),
+                listRevealedRowKeys: normalizeListRowRevealKeys(
+                    value.listRevealedRowKeys || value.position?.listRevealedRowKeys || []
+                ),
                 position: value.position || getPayloadPosition(value) || null
             };
         }
@@ -4790,7 +4942,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 safeStorageSet(NATIVE_TTS_VOICE_KEY, selectedNativeTtsVoiceId);
             }
             const payload = {
-                schemaVersion: 2,
+                schemaVersion: 3,
                 app: 'english-card',
                 [STORAGE_KEY]: backup.cards,
                 cards: backup.cards,
@@ -4801,6 +4953,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 [UI_CONFIG_KEY]: backup.uiConfig,
                 uiConfig: backup.uiConfig,
                 uiConfigUpdatedAt: Number(backup.uiConfigUpdatedAt) || Date.now(),
+                listRevealStates: backup.listRevealStates,
+                listRevealedRowKeys: backup.listRevealedRowKeys,
                 syncConflicts: Array.isArray(backup.syncConflicts) ? backup.syncConflicts : []
             };
             applySyncPayloadToLocalState(payload, { preserveView: false, source, createBackup: false });
@@ -4960,7 +5114,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const client = await getSupabaseClient();
             const { data, error } = await client
                 .from(SUPABASE_TABLE)
-                .select('id,sync_code,updated_at,sharedPosition:data->sharedPosition,positionsByDevice:data->positionsByDevice,lastMergedBy:data->>lastMergedBy,deviceId:data->>deviceId,syncRevision:data->>syncRevision,updatedAtClient:data->>updatedAtClient')
+                .select('id,sync_code,updated_at,sharedPosition:data->sharedPosition,positionsByDevice:data->positionsByDevice,listRevealStates:data->listRevealStates,listRevealedRowKeys:data->listRevealedRowKeys,lastMergedBy:data->>lastMergedBy,deviceId:data->>deviceId,syncRevision:data->>syncRevision,updatedAtClient:data->>updatedAtClient')
                 .eq('sync_code', AUTO_SYNC_CODE)
                 .maybeSingle();
             if (error) throw error;
@@ -4972,6 +5126,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 data: {
                     sharedPosition: data.sharedPosition || null,
                     positionsByDevice: data.positionsByDevice || {},
+                    listRevealStates: data.listRevealStates || {},
+                    listRevealedRowKeys: Array.isArray(data.listRevealedRowKeys) ? data.listRevealedRowKeys : [],
                     lastMergedBy: data.lastMergedBy || '',
                     deviceId: data.deviceId || '',
                     syncRevision: Number(data.syncRevision) || 0,
@@ -5008,7 +5164,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 bookmarkDifficultyFilter: normalizeDifficultyFilter(value.bookmarkDifficultyFilter),
                 listHideEnglish: !!value.listHideEnglish,
                 listHideKorean: !!value.listHideKorean,
-                listRevealedRowKeys: normalizeListRowRevealKeys(value.listRevealedRowKeys),
+                listRevealStates: normalizeListRevealStateMap(value.listRevealStates, value.listRevealedRowKeys),
+                listRevealedRowKeys: normalizeListRowRevealKeys(
+                    Object.keys(normalizeListRevealStateMap(value.listRevealStates, value.listRevealedRowKeys)).length
+                        ? getRevealedRowKeysFromStateMap(normalizeListRevealStateMap(value.listRevealStates, value.listRevealedRowKeys))
+                        : value.listRevealedRowKeys
+                ),
                 listScrollTop: Math.max(0, Math.round(Number(value.listScrollTop) || 0)),
                 categoryScrollTop: Math.max(0, Math.round(Number(value.categoryScrollTop) || 0)),
                 listScrollAnchor
@@ -5171,7 +5332,22 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     }));
                 }
             }
-            return selectLatestPositionSyncEnvelope(candidates);
+            let latest = selectLatestPositionSyncEnvelope(candidates);
+            if (!latest) return null;
+            const mergedRevealStates = mergeListRevealStateMaps(
+                payload.listRevealStates,
+                ...candidates.map(candidate => candidate?.state?.listRevealStates)
+            );
+            const mergedState = normalizePositionSyncState({
+                ...latest.state,
+                listRevealStates: mergedRevealStates
+            });
+            latest = {
+                ...latest,
+                state: mergedState,
+                stateHash: positionStateFingerprint(mergedState)
+            };
+            return latest;
         }
 
         function readPersistedPositionSyncEnvelope() {
@@ -5414,9 +5590,32 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         async function applyPositionSyncRow(row, options = {}) {
             if (!row?.data) return false;
-            const envelope = getPositionSyncEnvelopeFromRow(row);
-            const state = normalizePositionSyncState(envelope?.state || row.data.state);
-            if (!state) return false;
+            const rawEnvelope = getPositionSyncEnvelopeFromRow(row);
+            const rawState = normalizePositionSyncState(rawEnvelope?.state || row.data.state);
+            if (!rawState) return false;
+            const mergedIncomingRevealStates = mergeListRevealStateMaps(
+                listRevealStates,
+                row.data.listRevealStates,
+                rawState.listRevealStates
+            );
+            const revealStateChanged = listRevealStateFingerprint(mergedIncomingRevealStates)
+                !== listRevealStateFingerprint(listRevealStates);
+            if (revealStateChanged) {
+                applyListRevealStateMap(mergedIncomingRevealStates, [], { replace: true });
+                safeStorageSet(LIST_REVEAL_STATE_KEY, JSON.stringify(listRevealStates));
+                const localPosition = normalizePositionSyncState(getCurrentPositionState());
+                if (localPosition) safeStorageSet(POSITION_KEY, JSON.stringify(localPosition));
+                refreshRenderedListRevealStates();
+            }
+            const state = normalizePositionSyncState({
+                ...rawState,
+                listRevealStates: mergedIncomingRevealStates
+            });
+            const envelope = rawEnvelope ? {
+                ...rawEnvelope,
+                state,
+                stateHash: positionStateFingerprint(state)
+            } : null;
             const force = !!options.force;
             if (envelope) {
                 positionSyncClock = Math.max(positionSyncClock, envelope.clock);
@@ -5426,7 +5625,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const knownComparison = envelope && positionSyncKnownEnvelope
                 ? comparePositionSyncEnvelopes(envelope, positionSyncKnownEnvelope)
                 : null;
-            if (!force && knownComparison !== null && knownComparison <= 0) {
+            const sameEventStateChanged = knownComparison === 0
+                && envelope?.stateHash
+                && envelope.stateHash !== positionSyncKnownEnvelope?.stateHash;
+            if (!force && knownComparison !== null && knownComparison <= 0 && !sameEventStateChanged) {
                 if (knownComparison === 0 && envelope.sourceDeviceId === syncDeviceId && row.data.transport !== 'broadcast') {
                     clearPositionSyncRecordsThrough(envelope);
                 }
@@ -5440,7 +5642,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 if (comparedToPending < 0) return false;
                 if (comparedToPending >= 0) clearPositionSyncRecordsThrough(envelope);
             }
-            if (!force && envelope && envelope.sourceDeviceId === syncDeviceId) {
+            if (!force && envelope && envelope.sourceDeviceId === syncDeviceId && !sameEventStateChanged) {
                 rememberPositionSyncRow(row, envelope.stateHash);
                 if (row.data.transport !== 'broadcast') clearPositionSyncRecordsThrough(envelope);
                 return false;
@@ -6094,6 +6296,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (incomingUiConfig) applyUiConfig(incomingUiConfig, { updateCards: true });
             else applyUiConfig(uiConfig, { updateCards: true });
             uiConfigUpdatedAt = Number(payload.uiConfigUpdatedAt) || uiConfigUpdatedAt || 0;
+            applyListRevealStateMap(
+                payload.listRevealStates,
+                payload.listRevealedRowKeys || getPayloadPosition(payload)?.listRevealedRowKeys || []
+            );
             currentSyncConflicts = Array.isArray(payload.syncConflicts) ? payload.syncConflicts.slice(-40) : [];
             syncConflictCount = currentSyncConflicts.length;
             writeLocalAppState({ position: false });
@@ -7956,6 +8162,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const positionState = normalizePositionSyncState(rawState || getCurrentPositionState());
             if (!positionState) return null;
             safeStorageSet(POSITION_KEY, JSON.stringify(positionState));
+            safeStorageSet(LIST_REVEAL_STATE_KEY, JSON.stringify(normalizeListRevealStateMap(positionState.listRevealStates)));
             return positionState;
         }
 
@@ -8010,7 +8217,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             isListBookmarkMode = !!state.isListBookmarkMode;
             listHideEnglish = !!state.listHideEnglish;
             listHideKorean = !!state.listHideKorean;
-            restoreListRowRevealKeys(state.listRevealedRowKeys);
+            restoreListRowRevealKeys(state.listRevealedRowKeys, state.listRevealStates);
             isReversed = !!state.isReversed;
             isKoreanAutoplay = !!state.isKoreanAutoplay;
             lastKoreanAutoReadCardKey = '';
@@ -8033,8 +8240,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         }
 
         async function applyRemotePositionState(rawState) {
-            const state = normalizePositionSyncState(rawState);
-            if (!state) return false;
+            const incomingState = normalizePositionSyncState(rawState);
+            if (!incomingState) return false;
+            const state = normalizePositionSyncState({
+                ...incomingState,
+                listRevealStates: mergeListRevealStateMaps(listRevealStates, incomingState.listRevealStates)
+            });
             const currentState = normalizePositionSyncState(getCurrentPositionState());
             if (currentState && positionStateFingerprint(currentState) === positionStateFingerprint(state)) {
                 saveCurrentPositionLocally(state);
@@ -8134,10 +8345,18 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function restoreLastPosition() {
             const raw = safeStorageGet(POSITION_KEY);
-            if (!raw) return;
+            const storedRevealStates = normalizeListRevealStateMap(
+                safeJsonParse(safeStorageGet(LIST_REVEAL_STATE_KEY), null)
+            );
+            if (!raw) {
+                applyListRevealStateMap(storedRevealStates);
+                return;
+            }
             try {
                 const state = normalizePositionSyncState(JSON.parse(raw));
                 if (!state) return;
+                state.listRevealStates = mergeListRevealStateMaps(storedRevealStates, state.listRevealStates);
+                state.listRevealedRowKeys = getRevealedRowKeysFromStateMap(state.listRevealStates);
                 applyPositionStateValues(state);
                 shouldRestoreListModal = !!state.isListOpen;
                 restoredListScrollTop = Number(state.listScrollTop) || 0;
@@ -9148,7 +9367,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (isListEditMode) {
                 listRandomOrder = null;
                 listRandomScopeKey = '';
-                listRowRevealSet.clear();
+                clearListRowRevealStates();
             }
             renderListModal();
             restoreListAfterMutation(mutationContext);
@@ -9476,7 +9695,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             if (options.clearReveals) {
                 const hadRevealedRows = listRowRevealSet.size > 0;
-                listRowRevealSet.clear();
+                clearListRowRevealStates();
                 if (hadRevealedRows) {
                     container.querySelectorAll('[data-list-row-revealed="true"]').forEach(row => {
                         row.removeAttribute('data-list-row-revealed');
@@ -9529,7 +9748,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const wasRandom = !!listRandomOrder && listRandomScopeKey === getCurrentListScopeKey();
             listRandomOrder = null;
             listRandomScopeKey = '';
-            listRowRevealSet.clear();
+            clearListRowRevealStates();
             renderListModal();
             const container = document.getElementById('list-container');
             if (container) container.scrollTop = 0;
@@ -9552,7 +9771,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             listRandomScopeKey = getCurrentListScopeKey();
             listRandomOrder = shuffled.map(card => getListRowKey(card));
-            listRowRevealSet.clear();
+            clearListRowRevealStates();
             renderListModal();
 
             const container = document.getElementById('list-container');
@@ -9837,12 +10056,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                         return;
                     }
                     const willReveal = !listRowRevealSet.has(rowKey);
-                    if (willReveal) listRowRevealSet.add(rowKey);
-                    else listRowRevealSet.delete(rowKey);
+                    setListRowRevealState(rowKey, willReveal);
                     if (willReveal) div.dataset.listRowRevealed = 'true';
                     else div.removeAttribute('data-list-row-revealed');
                     sentenceBtn.textContent = willReveal ? getUiButtonLabel('hide', '숨김') : getUiButtonLabel('sentence', '문장');
-                    scheduleListPositionSave(60);
+                    persistAppData('list-answer-state', { backup: false });
+                    scheduleListPositionSave(20);
                 });
                 bottomActionRow.appendChild(sentenceBtn);
 
