@@ -3488,6 +3488,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         const POSITION_SYNC_REVISION_KEY = STORAGE_KEY + '_position_sync_revision_v1';
         const POSITION_SYNC_UPDATED_AT_KEY = STORAGE_KEY + '_position_sync_updated_at_v1';
         const POSITION_SYNC_HASH_KEY = STORAGE_KEY + '_position_sync_hash_v1';
+        const POSITION_SYNC_DURABLE_KEY = STORAGE_KEY + '_position_sync_durable_v2';
+        const POSITION_SYNC_ENVELOPE_KEY = STORAGE_KEY + '_position_sync_envelope_v2';
+        const POSITION_SYNC_CLOCK_KEY = STORAGE_KEY + '_position_sync_clock_v2';
         const CORRUPT_DATA_RECOVERY_KEY = STORAGE_KEY + '_corrupt_data_recovery_v1';
         const STARTUP_BACKUP_META_KEY = STORAGE_KEY + '_startup_backup_meta_v1';
         const BACKUP_DB_NAME = 'english-card-backups-v1';
@@ -3585,7 +3588,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         // 개인용 1인 앱 자동 동기화 고정값: PC/모바일이 같은 URL을 열면 항상 같은 행을 사용합니다.
         const AUTO_SYNC_CODE = 'HNLCARD-MAIN';
         const AUTO_SYNC_ROW_ID = '11111111-1111-4111-8111-111111111111';
-        const POSITION_SYNC_DURABLE_DELAY_MS = 60000;
+        // 실시간 Broadcast는 즉시 보내고, 같은 위치의 서버 영구 저장만 마지막 조작 후 잠깐 묶어서 처리한다.
+        const POSITION_SYNC_DURABLE_DELAY_MS = 8000;
         let supabaseClient = null;
         let currentSyncCode = AUTO_SYNC_CODE;
         let syncSaveTimer = null;
@@ -3610,7 +3614,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let positionSyncPollTimer = 0;
         let positionSyncRealtimeChannel = null;
         let positionSyncInitializationPromise = null;
+        // pending은 아직 Broadcast가 확인되지 않은 짧은 실시간 대기열이다.
+        // durable은 Broadcast 성공 여부와 무관하게 서버 주 행에 남길 최신 위치다.
         let positionSyncPendingState = null;
+        let positionSyncDurableState = null;
+        let positionSyncKnownEnvelope = null;
+        let positionSyncClock = 0;
         let positionSyncLastPublishedHash = '';
         let positionSyncSeenRevision = 0;
         let positionSyncSeenUpdatedAt = '';
@@ -3620,6 +3629,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let deferredPositionSyncRow = null;
         let isApplyingRemotePosition = false;
         let positionSyncRealtimeReady = false;
+        let positionSyncInitialized = false;
+        let positionSyncReconnectTimer = 0;
+        let positionSyncLastRequestAt = 0;
+        let positionSyncOpenedListDuringInitialization = false;
 
 
         const memoryStorageFallback = {};
@@ -3943,6 +3956,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const card = currentList[currentIndex];
             const listModal = document.getElementById('list-modal');
             const listContainer = document.getElementById('list-container');
+            const categoryContainer = document.getElementById('category-container');
             const isListOpen = shouldRestoreListModal || (listModal && !listModal.classList.contains('hidden'));
             const liveListScrollAnchor = isListOpen && !isRestoringListScrollAnchor
                 ? serializeListScrollAnchor(captureListScrollAnchor())
@@ -3970,6 +3984,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 listHideEnglish,
                 listHideKorean,
                 listScrollTop,
+                // modal을 막 닫은 순간에도 DOM에는 마지막 scrollTop이 남아 있으므로 항상 실측값을 우선한다.
+                categoryScrollTop: Math.max(0, Math.round(
+                    Number(categoryContainer?.scrollTop ?? fallback.categoryScrollTop) || 0
+                )),
                 listScrollAnchor: savedListScrollAnchor
             };
         }
@@ -4040,7 +4058,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 uiConfigUpdatedAt: Number(source.uiConfigUpdatedAt) || 0,
                 syncConflicts: Array.isArray(source.syncConflicts) ? source.syncConflicts : [],
                 syncRevision: Number(source.syncRevision) || 0,
-                positionsByDevice: source.positionsByDevice && typeof source.positionsByDevice === 'object' ? { ...source.positionsByDevice } : {}
+                positionsByDevice: source.positionsByDevice && typeof source.positionsByDevice === 'object' ? { ...source.positionsByDevice } : {},
+                sharedPosition: normalizePositionSyncEnvelope(source.sharedPosition)
             };
         }
 
@@ -4219,6 +4238,15 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 );
             });
             const mergedUiConfig = mergeSyncSection('uiConfig', base.uiConfig, local.uiConfig, remote.uiConfig, conflicts);
+            const mergedSharedPosition = selectLatestPositionSyncEnvelope([
+                getSharedPositionEnvelope(basePayload),
+                getSharedPositionEnvelope(localPayload),
+                getSharedPositionEnvelope(remotePayload)
+            ]);
+            const mergedPositionsByDevice = { ...base.positionsByDevice, ...remote.positionsByDevice, ...local.positionsByDevice };
+            if (mergedSharedPosition?.sourceDeviceId) {
+                mergedPositionsByDevice[mergedSharedPosition.sourceDeviceId] = serializePositionStateForDevice(mergedSharedPosition);
+            }
             const conflictKeys = new Set();
             const combinedConflicts = [...base.syncConflicts, ...remote.syncConflicts, ...local.syncConflicts, ...conflicts]
                 .filter(conflict => {
@@ -4242,10 +4270,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 [UI_CONFIG_KEY]: mergedUiConfig,
                 uiConfig: mergedUiConfig,
                 uiConfigUpdatedAt: Math.max(base.uiConfigUpdatedAt, local.uiConfigUpdatedAt, remote.uiConfigUpdatedAt),
-                positionsByDevice: { ...base.positionsByDevice, ...remote.positionsByDevice, ...local.positionsByDevice },
+                positionsByDevice: mergedPositionsByDevice,
+                sharedPosition: mergedSharedPosition,
                 syncRevision: Math.max(base.syncRevision, local.syncRevision, remote.syncRevision) + 1,
                 syncConflicts: combinedConflicts,
-                lastMergedBy: syncDeviceId,
+                lastMergedBy: mergedSharedPosition?.sourceDeviceId
+                    || String(remote.lastMergedBy || local.lastMergedBy || base.lastMergedBy || syncDeviceId),
                 updatedAtClient: new Date().toISOString()
             };
             return { payload: merged, conflicts: combinedConflicts };
@@ -4304,10 +4334,22 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function buildSyncPayload() {
             const previousBase = normalizeSyncPayload(getSyncBasePayload());
-            const positionsByDevice = {
-                ...previousBase.positionsByDevice,
-                [syncDeviceId]: getCurrentPositionState()
-            };
+            const storedEnvelope = readPersistedPositionSyncEnvelope();
+            const durableRecord = positionSyncDurableState || readPersistedPositionSyncDurable();
+            const pendingRecord = positionSyncPendingState || readPersistedPositionSyncPending();
+            const sharedPosition = selectLatestPositionSyncEnvelope([
+                previousBase.sharedPosition,
+                storedEnvelope,
+                durableRecord?.envelope,
+                pendingRecord?.envelope
+            ]);
+            const positionsByDevice = { ...previousBase.positionsByDevice };
+            if (sharedPosition?.sourceDeviceId) {
+                positionsByDevice[sharedPosition.sourceDeviceId] = serializePositionStateForDevice(sharedPosition);
+            } else if (!positionsByDevice[syncDeviceId]) {
+                const currentPosition = normalizePositionSyncState(getCurrentPositionState());
+                if (currentPosition) positionsByDevice[syncDeviceId] = currentPosition;
+            }
             const orderedCards = cards.slice().sort((a, b) => Number(a.originalIdx) - Number(b.originalIdx));
             return {
                 schemaVersion: 2,
@@ -4333,6 +4375,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 uiConfigUpdatedAt,
                 [DATA_VERSION_KEY]: embeddedDataVersion,
                 positionsByDevice,
+                sharedPosition,
+                lastMergedBy: sharedPosition?.sourceDeviceId || previousBase.lastMergedBy || syncDeviceId,
                 syncRevision: previousBase.syncRevision,
                 syncConflicts: currentSyncConflicts.slice(-40),
                 updatedAtClient: new Date().toISOString()
@@ -4676,7 +4720,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const client = await getSupabaseClient();
             const { data, error } = await client
                 .from(SUPABASE_TABLE)
-                .select('id,sync_code,updated_at,positionsByDevice:data->positionsByDevice,lastMergedBy:data->>lastMergedBy,deviceId:data->>deviceId,syncRevision:data->>syncRevision')
+                .select('id,sync_code,updated_at,sharedPosition:data->sharedPosition,positionsByDevice:data->positionsByDevice,lastMergedBy:data->>lastMergedBy,deviceId:data->>deviceId,syncRevision:data->>syncRevision,updatedAtClient:data->>updatedAtClient')
                 .eq('sync_code', AUTO_SYNC_CODE)
                 .maybeSingle();
             if (error) throw error;
@@ -4686,10 +4730,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 sync_code: data.sync_code,
                 updated_at: data.updated_at,
                 data: {
+                    sharedPosition: data.sharedPosition || null,
                     positionsByDevice: data.positionsByDevice || {},
                     lastMergedBy: data.lastMergedBy || '',
                     deviceId: data.deviceId || '',
-                    syncRevision: Number(data.syncRevision) || 0
+                    syncRevision: Number(data.syncRevision) || 0,
+                    updatedAtClient: data.updatedAtClient || ''
                 }
             };
         }
@@ -4723,6 +4769,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 listHideEnglish: !!value.listHideEnglish,
                 listHideKorean: !!value.listHideKorean,
                 listScrollTop: Math.max(0, Math.round(Number(value.listScrollTop) || 0)),
+                categoryScrollTop: Math.max(0, Math.round(Number(value.categoryScrollTop) || 0)),
                 listScrollAnchor
             };
         }
@@ -4735,9 +4782,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 comparable.listScrollTop = 0;
                 comparable.listScrollAnchor = {
                     rowKey: normalized.listScrollAnchor.rowKey,
-                    containerOffset: Number.isFinite(normalized.listScrollAnchor.containerOffset)
-                        ? Math.round(normalized.listScrollAnchor.containerOffset / 8) * 8
-                        : null
+                    rowIndex: Number.isInteger(normalized.listScrollAnchor.rowIndex)
+                        ? normalized.listScrollAnchor.rowIndex
+                        : null,
+                    rowOffsetRatio: Number.isFinite(normalized.listScrollAnchor.rowOffsetRatio)
+                        ? Math.round(normalized.listScrollAnchor.rowOffsetRatio * 100) / 100
+                        : null,
+                    containerOffset: !Number.isFinite(normalized.listScrollAnchor.rowOffsetRatio)
+                        && Number.isFinite(normalized.listScrollAnchor.containerOffset)
+                            ? Math.round(normalized.listScrollAnchor.containerOffset / 8) * 8
+                            : null
                 };
             } else {
                 comparable.listScrollTop = Math.round(normalized.listScrollTop / 32) * 32;
@@ -4746,21 +4800,268 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             return simpleCardHash(syncComparable(comparable));
         }
 
-        function readPersistedPositionSyncPending() {
-            const saved = safeJsonParse(safeStorageGet(POSITION_SYNC_PENDING_KEY), null);
-            const state = normalizePositionSyncState(saved?.state);
+        function normalizePositionSyncEnvelope(value, fallbackState = null, fallback = {}) {
+            const source = value && typeof value === 'object' ? value : {};
+            const looksLikeState = 'cardKey' in source || 'originalIdx' in source || 'isListOpen' in source;
+            const state = normalizePositionSyncState(source.state || fallbackState || (looksLikeState ? source : null));
             if (!state) return null;
+            const clock = Math.max(0, Math.floor(Number(source.clock ?? source.logicalClock ?? fallback.clock) || 0));
+            const sourceDeviceId = String(source.sourceDeviceId || fallback.sourceDeviceId || '');
+            const actionAt = String(source.actionAt || source.clientUpdatedAt || fallback.actionAt || '');
+            const stateHash = String(source.stateHash || positionStateFingerprint(state));
+            const eventSeed = `${clock}|${sourceDeviceId}|${actionAt}|${stateHash}`;
+            const eventId = String(source.eventId || fallback.eventId || `legacy:${simpleCardHash(eventSeed)}`);
+            const legacy = source.legacy === true
+                || fallback.legacy === true
+                || (!source.eventId && !fallback.eventId && !Number(source.clock ?? source.logicalClock ?? fallback.clock));
+            return { version: 1, eventId, clock, sourceDeviceId, actionAt, stateHash, legacy, state };
+        }
+
+        function comparePositionSyncEnvelopes(left, right) {
+            const a = normalizePositionSyncEnvelope(left);
+            const b = normalizePositionSyncEnvelope(right);
+            if (!a && !b) return 0;
+            if (!a) return -1;
+            if (!b) return 1;
+            const aTime = Date.parse(a.actionAt || '') || 0;
+            const bTime = Date.parse(b.actionAt || '') || 0;
+            // 기기별 logical clock은 전역 카운터가 아니므로 PC의 오래된 큰 clock이
+            // 모바일의 방금 조작을 이기지 않게 실제 조작 시각을 우선한다.
+            if (aTime !== bTime) return aTime > bTime ? 1 : -1;
+            if (a.clock !== b.clock) return a.clock > b.clock ? 1 : -1;
+            if (a.eventId === b.eventId) return 0;
+            return a.eventId > b.eventId ? 1 : -1;
+        }
+
+        function selectLatestPositionSyncEnvelope(values) {
+            let latest = null;
+            (Array.isArray(values) ? values : []).forEach(value => {
+                const candidate = normalizePositionSyncEnvelope(value);
+                if (candidate && (!latest || comparePositionSyncEnvelopes(candidate, latest) > 0)) latest = candidate;
+            });
+            return latest;
+        }
+
+        function serializePositionStateForDevice(envelope) {
+            const normalized = normalizePositionSyncEnvelope(envelope);
+            if (!normalized) return null;
+            return {
+                ...normalized.state,
+                _positionEventId: normalized.eventId,
+                _positionClock: normalized.clock,
+                _positionSourceDeviceId: normalized.sourceDeviceId,
+                _positionActionAt: normalized.actionAt,
+                _positionStateHash: normalized.stateHash,
+                _positionLegacy: normalized.legacy
+            };
+        }
+
+        function getSharedPositionEnvelope(payload, rowUpdatedAt = '') {
+            if (!payload || typeof payload !== 'object') return null;
+            const candidates = [];
+            const explicit = normalizePositionSyncEnvelope(payload.sharedPosition);
+            if (explicit) candidates.push(explicit);
+
+            const positions = payload.positionsByDevice && typeof payload.positionsByDevice === 'object'
+                ? payload.positionsByDevice
+                : null;
+            if (positions) {
+                const preferredKey = String(payload.lastMergedBy || payload.deviceId || '');
+                const orderedKeys = [preferredKey, ...Object.keys(positions)].filter((key, index, list) => key && list.indexOf(key) === index);
+                orderedKeys.forEach(key => {
+                    const value = positions[key];
+                    const state = normalizePositionSyncState(value);
+                    if (!state) return;
+                    const hasMetadata = !!(value?._positionEventId || Number(value?._positionClock) || value?._positionActionAt);
+                    if (hasMetadata) {
+                        candidates.push(normalizePositionSyncEnvelope({
+                            eventId: value._positionEventId,
+                            clock: value._positionClock,
+                            sourceDeviceId: value._positionSourceDeviceId || key,
+                            actionAt: value._positionActionAt,
+                            stateHash: value._positionStateHash,
+                            legacy: value._positionLegacy === true,
+                            state
+                        }));
+                    }
+                });
+
+                // 혼합 버전 상태에서는 구버전 탭이 lastMergedBy 위치만 갱신하고 sharedPosition은 그대로 둘 수 있다.
+                // 임의의 오래된 기기 항목이 아니라 lastMergedBy 항목만 서버 행 시각으로 비교한다.
+                const preferredValue = preferredKey ? positions[preferredKey] : null;
+                const preferredState = normalizePositionSyncState(preferredValue);
+                const preferredHasMetadata = !!(
+                    preferredValue?._positionEventId
+                    || Number(preferredValue?._positionClock)
+                    || preferredValue?._positionActionAt
+                );
+                if (preferredState && !preferredHasMetadata) {
+                    const actionAt = String(rowUpdatedAt || payload.updatedAtClient || '');
+                    const legacyCandidate = normalizePositionSyncEnvelope({
+                            eventId: `legacy-main:${simpleCardHash(`${preferredKey}|${actionAt}|${positionStateFingerprint(preferredState)}`)}`,
+                            clock: 0,
+                            sourceDeviceId: preferredKey,
+                            actionAt,
+                            legacy: true,
+                            state: preferredState
+                        });
+                    const sameAsExplicit = explicit?.stateHash === legacyCandidate?.stateHash;
+                    const explicitTime = Date.parse(explicit?.actionAt || '') || 0;
+                    const legacyTime = Date.parse(legacyCandidate?.actionAt || '') || 0;
+                    if (legacyCandidate && (!explicit || (!sameAsExplicit && (!explicitTime || legacyTime > explicitTime)))) {
+                        candidates.push(legacyCandidate);
+                    }
+                }
+            }
+
+            if (candidates.length === 0) {
+                const direct = getPayloadPosition(payload);
+                const state = normalizePositionSyncState(direct);
+                if (state) {
+                    const sourceDeviceId = String(payload.lastMergedBy || payload.deviceId || '');
+                    const actionAt = String(rowUpdatedAt || payload.updatedAtClient || '');
+                    candidates.push(normalizePositionSyncEnvelope({
+                        eventId: `legacy-direct:${simpleCardHash(`${sourceDeviceId}|${actionAt}|${positionStateFingerprint(state)}`)}`,
+                        clock: 0,
+                        sourceDeviceId,
+                        actionAt,
+                        legacy: true,
+                        state
+                    }));
+                }
+            }
+            return selectLatestPositionSyncEnvelope(candidates);
+        }
+
+        function readPersistedPositionSyncEnvelope() {
+            return normalizePositionSyncEnvelope(safeJsonParse(safeStorageGet(POSITION_SYNC_ENVELOPE_KEY), null));
+        }
+
+        function rememberPositionSyncEnvelope(value) {
+            const envelope = normalizePositionSyncEnvelope(value);
+            if (!envelope) return positionSyncKnownEnvelope;
+            positionSyncClock = Math.max(positionSyncClock, envelope.clock);
+            safeStorageSet(POSITION_SYNC_CLOCK_KEY, String(positionSyncClock));
+            if (!positionSyncKnownEnvelope || comparePositionSyncEnvelopes(envelope, positionSyncKnownEnvelope) >= 0) {
+                positionSyncKnownEnvelope = envelope;
+                positionSyncLastPublishedHash = envelope.stateHash;
+                safeStorageSet(POSITION_SYNC_ENVELOPE_KEY, JSON.stringify(envelope));
+                safeStorageSet(POSITION_SYNC_HASH_KEY, envelope.stateHash);
+            }
+            return positionSyncKnownEnvelope;
+        }
+
+        function createPositionSyncEnvelope(rawState) {
+            const state = normalizePositionSyncState(rawState);
+            if (!state) return null;
+            const storedClock = Number(safeStorageGet(POSITION_SYNC_CLOCK_KEY)) || 0;
+            positionSyncClock = Math.max(
+                positionSyncClock,
+                storedClock,
+                Number(positionSyncKnownEnvelope?.clock) || 0,
+                Number(positionSyncPendingState?.envelope?.clock) || 0,
+                Number(positionSyncDurableState?.envelope?.clock) || 0
+            ) + 1;
+            const knownActionTime = Date.parse(positionSyncKnownEnvelope?.actionAt || '') || 0;
+            // 상대 기기 시계가 조금 앞서 있어도, 그 상태를 본 뒤의 실제 사용자 조작은 항상 그 다음 시각이 된다.
+            const actionAt = new Date(Math.max(Date.now(), knownActionTime + 1)).toISOString();
+            const envelope = normalizePositionSyncEnvelope({
+                eventId: `${syncDeviceId}:${positionSyncClock}:${generateUUID()}`,
+                clock: positionSyncClock,
+                sourceDeviceId: syncDeviceId,
+                actionAt,
+                stateHash: positionStateFingerprint(state),
+                state
+            });
+            rememberPositionSyncEnvelope(envelope);
+            return envelope;
+        }
+
+        function normalizePositionSyncRecord(saved) {
+            const state = normalizePositionSyncState(saved?.state || saved?.envelope?.state);
+            if (!state) return null;
+            const hash = positionStateFingerprint(state);
+            const queuedAt = Number(saved?.queuedAt) || Date.now();
+            let envelope = normalizePositionSyncEnvelope(saved?.envelope, state);
+            if (!envelope) {
+                const nextClock = Math.max(
+                    positionSyncClock,
+                    Number(positionSyncKnownEnvelope?.clock) || 0,
+                    Number(safeStorageGet(POSITION_SYNC_CLOCK_KEY)) || 0
+                ) + 1;
+                positionSyncClock = nextClock;
+                envelope = normalizePositionSyncEnvelope({
+                    eventId: `${syncDeviceId}:migrated:${queuedAt}:${hash}`,
+                    clock: nextClock,
+                    sourceDeviceId: syncDeviceId,
+                    actionAt: new Date(queuedAt).toISOString(),
+                    stateHash: hash,
+                    state
+                });
+            }
             return {
                 state,
-                hash: positionStateFingerprint(state),
-                queuedAt: Number(saved.queuedAt) || Date.now(),
-                broadcastedAt: Number(saved.broadcastedAt) || 0
+                hash,
+                queuedAt,
+                broadcastedAt: Number(saved?.broadcastedAt) || 0,
+                envelope
             };
+        }
+
+        function readPersistedPositionSyncPending() {
+            const record = normalizePositionSyncRecord(safeJsonParse(safeStorageGet(POSITION_SYNC_PENDING_KEY), null));
+            // 이전 버전에서 Broadcast 성공 후 60초 동안 남겨 두던 항목은 실시간 적용을 막지 않게 한다.
+            return record?.broadcastedAt ? null : record;
+        }
+
+        function readPersistedPositionSyncDurable() {
+            const durable = normalizePositionSyncRecord(safeJsonParse(safeStorageGet(POSITION_SYNC_DURABLE_KEY), null));
+            if (durable) return durable;
+            // v1의 Broadcast 완료 항목도 한 번은 서버 영구 저장 대상으로 승계한다.
+            return normalizePositionSyncRecord(safeJsonParse(safeStorageGet(POSITION_SYNC_PENDING_KEY), null));
         }
 
         function persistPositionSyncPending(record) {
             positionSyncPendingState = record || null;
             safeStorageSet(POSITION_SYNC_PENDING_KEY, record ? JSON.stringify(record) : '');
+        }
+
+        function persistPositionSyncDurable(record) {
+            positionSyncDurableState = record || null;
+            safeStorageSet(POSITION_SYNC_DURABLE_KEY, record ? JSON.stringify(record) : '');
+        }
+
+        function clearPositionSyncRecordsThrough(envelope) {
+            const normalized = normalizePositionSyncEnvelope(envelope);
+            if (!normalized) return;
+            if (positionSyncPendingState && comparePositionSyncEnvelopes(positionSyncPendingState.envelope, normalized) <= 0) {
+                persistPositionSyncPending(null);
+            }
+            if (positionSyncDurableState && comparePositionSyncEnvelopes(positionSyncDurableState.envelope, normalized) <= 0) {
+                persistPositionSyncDurable(null);
+            }
+        }
+
+        function schedulePositionSyncUpload(delayMs, options = {}) {
+            if (positionSyncTimer) clearTimeout(positionSyncTimer);
+            if (!navigator.onLine) return;
+            positionSyncTimer = setTimeout(() => {
+                positionSyncTimer = 0;
+                uploadPositionToSupabase(options);
+            }, Math.max(0, Number(delayMs) || 0));
+        }
+
+        async function broadcastPendingPositionWhilePersisting(record) {
+            if (!record?.envelope || !positionSyncRealtimeReady || !positionSyncRealtimeChannel || !navigator.onLine) return false;
+            const sent = await sendPositionSyncEnvelope(record.envelope, 'action');
+            if (sent) {
+                rememberPositionSyncEnvelope(record.envelope);
+                if (positionSyncPendingState?.envelope?.eventId === record.envelope.eventId) persistPositionSyncPending(null);
+                return true;
+            }
+            stopPositionSyncRealtime();
+            schedulePositionSyncReconnect(900);
+            return false;
         }
 
         function queuePositionSync(rawState = null, delayMs = 180, options = {}) {
@@ -4769,31 +5070,49 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!state) return false;
             const hash = positionStateFingerprint(state);
             if (!hash) return false;
-            const existing = positionSyncPendingState || readPersistedPositionSyncPending();
-            if (existing?.hash === hash) return false;
-            if (!options.force && !existing && hash === positionSyncLastPublishedHash) return false;
+            positionSyncPendingState ||= readPersistedPositionSyncPending();
+            positionSyncDurableState ||= readPersistedPositionSyncDurable();
+            if (positionSyncPendingState?.hash === hash) return false;
+            if (!options.force && !positionSyncPendingState && positionSyncDurableState?.hash === hash) return false;
+            if (!options.force && !positionSyncPendingState && !positionSyncDurableState && hash === positionSyncLastPublishedHash) return false;
 
-            const record = { state, hash, queuedAt: Date.now(), broadcastedAt: 0 };
+            const envelope = createPositionSyncEnvelope(state);
+            if (!envelope) return false;
+            const record = { state, hash, queuedAt: Date.now(), broadcastedAt: 0, envelope };
             persistPositionSyncPending(record);
+            persistPositionSyncDurable(record);
             if (positionSyncInFlight) {
                 positionSyncFollowUp = true;
+                // 큰 주 행을 저장 중이어도 사용자가 방금 넘긴 카드/목록 위치 Broadcast는 기다리지 않는다.
+                broadcastPendingPositionWhilePersisting(record);
                 return true;
             }
-            if (positionSyncTimer) clearTimeout(positionSyncTimer);
-            if (!navigator.onLine) return true;
-            positionSyncTimer = setTimeout(() => {
-                positionSyncTimer = 0;
-                uploadPositionToSupabase({ reason: options.reason || 'position' });
-            }, Math.max(0, Number(delayMs) || 0));
+            schedulePositionSyncUpload(delayMs, { reason: options.reason || 'position' });
             return true;
+        }
+
+        function getPositionSyncEnvelopeFromRow(row) {
+            if (!row?.data) return null;
+            return normalizePositionSyncEnvelope(
+                row.data.envelope || row.data.sharedPosition,
+                row.data.state,
+                {
+                    sourceDeviceId: String(row.data.sourceDeviceId || row.data.lastMergedBy || row.data.deviceId || ''),
+                    actionAt: String(row.data.clientUpdatedAt || row.updated_at || '')
+                }
+            );
         }
 
         function rememberPositionSyncRow(row, stateHash = '') {
             if (!row?.data) return;
-            const revision = Number(row.data.revision) || 0;
+            const revision = Number(row.data.revision ?? row.data.syncRevision) || 0;
             positionSyncSeenRevision = Math.max(positionSyncSeenRevision, revision);
-            positionSyncSeenUpdatedAt = String(row.updated_at || positionSyncSeenUpdatedAt || '');
-            const hash = stateHash || positionStateFingerprint(row.data.state);
+            const incomingTime = Date.parse(row.updated_at || '') || 0;
+            const seenTime = Date.parse(positionSyncSeenUpdatedAt || '') || 0;
+            if (incomingTime >= seenTime) positionSyncSeenUpdatedAt = String(row.updated_at || positionSyncSeenUpdatedAt || '');
+            const envelope = getPositionSyncEnvelopeFromRow(row);
+            if (envelope) rememberPositionSyncEnvelope(envelope);
+            const hash = stateHash || envelope?.stateHash || positionStateFingerprint(row.data.state);
             if (hash) positionSyncLastPublishedHash = hash;
             safeStorageSet(POSITION_SYNC_REVISION_KEY, String(positionSyncSeenRevision));
             safeStorageSet(POSITION_SYNC_UPDATED_AT_KEY, positionSyncSeenUpdatedAt);
@@ -4802,10 +5121,13 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         function isPositionSyncRowNewer(row) {
             if (!row?.data) return false;
+            const envelope = getPositionSyncEnvelopeFromRow(row);
+            if (envelope && positionSyncKnownEnvelope) return comparePositionSyncEnvelopes(envelope, positionSyncKnownEnvelope) > 0;
+            if (envelope) return true;
             const remoteTime = Date.parse(row.updated_at || '') || 0;
             const localTime = Date.parse(positionSyncSeenUpdatedAt || '') || 0;
             if (remoteTime && localTime && remoteTime !== localTime) return remoteTime > localTime;
-            const revision = Number(row.data.revision) || 0;
+            const revision = Number(row.data.revision ?? row.data.syncRevision) || 0;
             if (revision !== positionSyncSeenRevision) return revision > positionSyncSeenRevision;
             return remoteTime > localTime;
         }
@@ -4813,26 +5135,30 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function shouldDelayRemotePositionApply() {
             const addModal = document.getElementById('add-modal');
             const grammarModal = document.getElementById('grammar-table-modal');
-            const activeTag = String(document.activeElement?.tagName || '').toUpperCase();
             return isEditing
                 || isListEditMode
                 || isApplyingRemoteData
                 || isApplyingRemotePosition
                 || !!document.activeElement?.isContentEditable
-                || ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)
                 || (addModal && !addModal.classList.contains('hidden'))
                 || (grammarModal && grammarModal.classList.contains('is-open'));
         }
 
         function deferPositionSyncRow(row) {
-            const incomingRevision = Number(row?.data?.revision) || 0;
-            const savedRevision = Number(deferredPositionSyncRow?.data?.revision) || 0;
-            if (!deferredPositionSyncRow || incomingRevision >= savedRevision) deferredPositionSyncRow = row;
+            const incomingEnvelope = getPositionSyncEnvelopeFromRow(row);
+            const savedEnvelope = getPositionSyncEnvelopeFromRow(deferredPositionSyncRow);
+            const incomingRevision = Number(row?.data?.revision ?? row?.data?.syncRevision) || 0;
+            const savedRevision = Number(deferredPositionSyncRow?.data?.revision ?? deferredPositionSyncRow?.data?.syncRevision) || 0;
+            if (!deferredPositionSyncRow
+                || (incomingEnvelope && (!savedEnvelope || comparePositionSyncEnvelopes(incomingEnvelope, savedEnvelope) >= 0))
+                || (!incomingEnvelope && !savedEnvelope && incomingRevision >= savedRevision)) {
+                deferredPositionSyncRow = row;
+            }
             if (positionSyncDeferredApplyTimer) clearTimeout(positionSyncDeferredApplyTimer);
             positionSyncDeferredApplyTimer = setTimeout(() => {
                 positionSyncDeferredApplyTimer = 0;
                 flushDeferredPositionSyncRow();
-            }, 1200);
+            }, 600);
         }
 
         async function flushDeferredPositionSyncRow() {
@@ -4847,24 +5173,38 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
         async function applyPositionSyncRow(row, options = {}) {
             if (!row?.data) return false;
-            const state = normalizePositionSyncState(row.data.state);
+            const envelope = getPositionSyncEnvelopeFromRow(row);
+            const state = normalizePositionSyncState(envelope?.state || row.data.state);
             if (!state) return false;
             const force = !!options.force;
-            if (!force && !isPositionSyncRowNewer(row)) return false;
-            if (!force && String(row.data.sourceDeviceId || '') === syncDeviceId) {
-                rememberPositionSyncRow(row, positionStateFingerprint(state));
+            if (envelope) {
+                positionSyncClock = Math.max(positionSyncClock, envelope.clock);
+                safeStorageSet(POSITION_SYNC_CLOCK_KEY, String(positionSyncClock));
+            }
+
+            const knownComparison = envelope && positionSyncKnownEnvelope
+                ? comparePositionSyncEnvelopes(envelope, positionSyncKnownEnvelope)
+                : null;
+            if (!force && knownComparison !== null && knownComparison <= 0) {
+                if (knownComparison === 0 && envelope.sourceDeviceId === syncDeviceId && row.data.transport !== 'broadcast') {
+                    clearPositionSyncRecordsThrough(envelope);
+                }
                 return false;
             }
-            if (!force && row.data.transport === 'broadcast' && row.data.broadcastKind === 'action' && positionSyncPendingState?.broadcastedAt) {
-                const remoteActionAt = Date.parse(row.data.clientUpdatedAt || row.updated_at || '') || Date.now();
-                const localActionAt = Number(positionSyncPendingState.queuedAt) || 0;
-                if (remoteActionAt >= localActionAt) {
-                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
-                    positionSyncTimer = 0;
-                    positionSyncFollowUp = false;
-                    persistPositionSyncPending(null);
-                }
+            if (!force && !envelope && !isPositionSyncRowNewer(row)) return false;
+
+            const pendingEnvelope = positionSyncPendingState?.envelope;
+            if (!force && envelope && pendingEnvelope) {
+                const comparedToPending = comparePositionSyncEnvelopes(envelope, pendingEnvelope);
+                if (comparedToPending < 0) return false;
+                if (comparedToPending >= 0) clearPositionSyncRecordsThrough(envelope);
             }
+            if (!force && envelope && envelope.sourceDeviceId === syncDeviceId) {
+                rememberPositionSyncRow(row, envelope.stateHash);
+                if (row.data.transport !== 'broadcast') clearPositionSyncRecordsThrough(envelope);
+                return false;
+            }
+
             const wantsBookmarkCard = state.isFilterMode || state.activeStudyCategory === 'bookmark';
             const targetCard = state.cardKey
                 ? cards.find(card => cardStableKey(card) === state.cardKey)
@@ -4890,34 +5230,64 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 return false;
             }
             const applied = await applyRemotePositionState(state);
-            rememberPositionSyncRow(row, positionStateFingerprint(state));
+            rememberPositionSyncRow({
+                ...row,
+                data: { ...row.data, state, envelope }
+            }, envelope?.stateHash || positionStateFingerprint(state));
+            if (envelope) clearPositionSyncRecordsThrough(envelope);
             return applied;
         }
 
         function getLegacySharedPosition(payload) {
-            const direct = getPayloadPosition(payload);
-            if (direct && typeof direct === 'object') return normalizePositionSyncState(direct);
-            const positions = payload?.positionsByDevice;
-            if (!positions || typeof positions !== 'object') return null;
-            const preferredKey = String(payload.lastMergedBy || payload.deviceId || '');
-            if (preferredKey && positions[preferredKey]) return normalizePositionSyncState(positions[preferredKey]);
-            const values = Object.values(positions);
-            return normalizePositionSyncState(values[values.length - 1]);
+            return getSharedPositionEnvelope(payload)?.state || null;
         }
 
         function applySharedPositionFromMainRow(row, options = {}) {
             if (!row?.data) return false;
-            if (positionSyncRealtimeReady && !options.force) return false;
-            const state = getLegacySharedPosition(row.data);
-            if (!state) return false;
+            const envelope = getSharedPositionEnvelope(row.data, row.updated_at);
+            if (!envelope) return false;
             return applyPositionSyncRow({
                 data: {
-                    state,
-                    sourceDeviceId: String(row.data.lastMergedBy || row.data.deviceId || ''),
-                    revision: Number(row.data.syncRevision) || 0
+                    state: envelope.state,
+                    envelope,
+                    sourceDeviceId: envelope.sourceDeviceId,
+                    revision: Number(row.data.syncRevision) || 0,
+                    transport: 'main'
                 },
-                updated_at: row.updated_at || new Date().toISOString()
+                updated_at: row.updated_at || envelope.actionAt || new Date().toISOString()
             }, options);
+        }
+
+        async function sendPositionSyncEnvelope(envelope, kind = 'action') {
+            const normalized = normalizePositionSyncEnvelope(envelope);
+            if (!normalized || !positionSyncRealtimeReady || !positionSyncRealtimeChannel || !navigator.onLine) return false;
+            try {
+                const result = await positionSyncRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'position',
+                    payload: {
+                        senderDeviceId: syncDeviceId,
+                        sourceDeviceId: normalized.sourceDeviceId,
+                        envelope: normalized,
+                        // v1 탭도 같은 메시지를 받을 수 있도록 기존 필드도 함께 보낸다.
+                        state: normalized.state,
+                        stateHash: normalized.stateHash,
+                        clientUpdatedAt: normalized.actionAt,
+                        kind
+                    }
+                });
+                const status = String(result || '').toLowerCase();
+                const succeeded = !status.includes('error') && !status.includes('timed');
+                if (!succeeded) {
+                    stopPositionSyncRealtime();
+                    schedulePositionSyncReconnect(900);
+                }
+                return succeeded;
+            } catch (error) {
+                stopPositionSyncRealtime();
+                schedulePositionSyncReconnect(900);
+                return false;
+            }
         }
 
         async function uploadPositionToSupabase(options = {}) {
@@ -4926,84 +5296,68 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 return false;
             }
             positionSyncPendingState ||= readPersistedPositionSyncPending();
-            if (!positionSyncPendingState && options.force) {
+            positionSyncDurableState ||= readPersistedPositionSyncDurable();
+            if (!positionSyncPendingState && !positionSyncDurableState && options.force) {
                 const state = normalizePositionSyncState(getCurrentPositionState());
-                if (state) persistPositionSyncPending({
-                    state,
-                    hash: positionStateFingerprint(state),
-                    queuedAt: Date.now(),
-                    broadcastedAt: 0
-                });
+                if (state) queuePositionSync(state, 0, { force: true, reason: options.reason || 'position-force' });
             }
-            if (!positionSyncPendingState || !navigator.onLine) return false;
+            if ((!positionSyncPendingState && !positionSyncDurableState) || !navigator.onLine) return false;
 
-            const outgoing = positionSyncPendingState;
             try {
                 positionSyncInFlight = true;
                 positionSyncFollowUp = false;
-                if (!outgoing.broadcastedAt && positionSyncRealtimeReady && positionSyncRealtimeChannel) {
-                    const sentAt = new Date().toISOString();
-                    const result = await positionSyncRealtimeChannel.send({
-                        type: 'broadcast',
-                        event: 'position',
-                        payload: {
-                            sourceDeviceId: syncDeviceId,
-                            state: outgoing.state,
-                            stateHash: outgoing.hash,
-                            clientUpdatedAt: sentAt,
-                            kind: 'action'
+                const outgoingLive = positionSyncPendingState;
+                let broadcastSucceeded = false;
+                if (outgoingLive && positionSyncRealtimeReady && positionSyncRealtimeChannel) {
+                    broadcastSucceeded = await sendPositionSyncEnvelope(outgoingLive.envelope, 'action');
+                    if (broadcastSucceeded) {
+                        rememberPositionSyncEnvelope(outgoingLive.envelope);
+                        if (positionSyncPendingState?.envelope?.eventId === outgoingLive.envelope.eventId) {
+                            // Broadcast 확인 즉시 실시간 대기열에서 제거해야 다른 기기의 다음 action을 막지 않는다.
+                            persistPositionSyncPending(null);
                         }
-                    });
-                    const sendStatus = String(result || '').toLowerCase();
-                    const sendFailed = sendStatus.includes('error') || sendStatus.includes('timed');
-                    if (sendFailed) {
+                    } else {
                         stopPositionSyncRealtime();
-                        setTimeout(startPositionSyncRealtime, 1200);
-                    } else if (positionSyncPendingState?.hash === outgoing.hash) {
-                        const broadcasted = { ...outgoing, broadcastedAt: Date.now() };
-                        persistPositionSyncPending(broadcasted);
-                        rememberPositionSyncRow({
-                            data: { state: outgoing.state, sourceDeviceId: syncDeviceId, revision: 0 },
-                            updated_at: sentAt
-                        }, outgoing.hash);
+                        schedulePositionSyncReconnect(900);
                     }
                 }
 
-                const currentPending = positionSyncPendingState;
-                if (!currentPending || currentPending.hash !== outgoing.hash) {
-                    positionSyncFollowUp = true;
-                    return true;
-                }
-
-                const quietFor = Date.now() - Number(currentPending.queuedAt || 0);
+                const durable = positionSyncDurableState || readPersistedPositionSyncDurable();
+                if (!durable) return broadcastSucceeded;
+                const quietFor = Date.now() - Number(durable.queuedAt || 0);
                 const shouldPersistNow = !!options.persist
                     || !positionSyncRealtimeReady
-                    || !currentPending.broadcastedAt
                     || quietFor >= POSITION_SYNC_DURABLE_DELAY_MS;
                 if (!shouldPersistNow) {
-                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
-                    positionSyncTimer = setTimeout(() => {
-                        positionSyncTimer = 0;
-                        uploadPositionToSupabase({ reason: 'position-durable', persist: true });
-                    }, Math.max(120, POSITION_SYNC_DURABLE_DELAY_MS - quietFor));
+                    schedulePositionSyncUpload(
+                        Math.max(120, POSITION_SYNC_DURABLE_DELAY_MS - quietFor),
+                        { reason: 'position-durable', persist: true }
+                    );
                     return true;
                 }
 
+                const durableEventId = durable.envelope?.eventId || '';
                 const persisted = await uploadLocalDataToSupabase({
                     reason: options.reason || 'position-durable',
                     allowWhileListOpen: true
                 });
                 if (!persisted) throw new Error('화면 위치 영구 저장 실패');
-                if (positionSyncPendingState?.hash === outgoing.hash) persistPositionSyncPending(null);
-                else positionSyncFollowUp = true;
+                const savedEnvelope = getSharedPositionEnvelope(getSyncBasePayload());
+                const durableWasSavedOrSuperseded = !!savedEnvelope
+                    && comparePositionSyncEnvelopes(savedEnvelope, durable.envelope) >= 0;
+                if (!durableWasSavedOrSuperseded) {
+                    positionSyncFollowUp = true;
+                    return false;
+                }
+                if (positionSyncDurableState?.envelope?.eventId === durableEventId) persistPositionSyncDurable(null);
+                if (positionSyncPendingState?.envelope?.eventId === durableEventId) persistPositionSyncPending(null);
                 return true;
             } catch (error) {
                 if (navigator.onLine) {
-                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
-                    positionSyncTimer = setTimeout(() => {
-                        positionSyncTimer = 0;
-                        uploadPositionToSupabase({ reason: 'position-retry' });
-                    }, 1500);
+                    schedulePositionSyncUpload(1500, {
+                        reason: 'position-retry',
+                        persist: !positionSyncRealtimeReady
+                    });
                 }
                 return false;
             } finally {
@@ -5015,24 +5369,40 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 }
                 if (positionSyncFollowUp && positionSyncPendingState && navigator.onLine) {
                     positionSyncFollowUp = false;
-                    if (positionSyncTimer) clearTimeout(positionSyncTimer);
-                    positionSyncTimer = setTimeout(() => {
-                        positionSyncTimer = 0;
-                        uploadPositionToSupabase({ reason: 'position-follow-up' });
-                    }, 80);
+                    schedulePositionSyncUpload(60, { reason: 'position-follow-up' });
+                } else if (positionSyncDurableState && navigator.onLine && !positionSyncTimer) {
+                    const quietFor = Date.now() - Number(positionSyncDurableState.queuedAt || 0);
+                    schedulePositionSyncUpload(
+                        Math.max(120, POSITION_SYNC_DURABLE_DELAY_MS - quietFor),
+                        { reason: 'position-durable', persist: true }
+                    );
                 }
             }
         }
 
         async function refreshPositionSync() {
-            if (!navigator.onLine || positionSyncReadInFlight || positionSyncInFlight || document.visibilityState === 'hidden') return;
+            if (!navigator.onLine || positionSyncReadInFlight || positionSyncInFlight || document.visibilityState === 'hidden') return false;
             positionSyncPendingState ||= readPersistedPositionSyncPending();
-            if (positionSyncPendingState) {
-                const quietFor = Date.now() - Number(positionSyncPendingState.queuedAt || 0);
-                uploadPositionToSupabase({
-                    reason: 'position-poll-pending',
-                    persist: quietFor >= POSITION_SYNC_DURABLE_DELAY_MS
-                });
+            positionSyncDurableState ||= readPersistedPositionSyncDurable();
+            if (positionSyncPendingState) await uploadPositionToSupabase({ reason: 'position-poll-pending' });
+            if (positionSyncInFlight) return false;
+            const durableQuietFor = positionSyncDurableState
+                ? Date.now() - Number(positionSyncDurableState.queuedAt || 0)
+                : 0;
+            if (positionSyncDurableState && durableQuietFor >= POSITION_SYNC_DURABLE_DELAY_MS) {
+                await uploadPositionToSupabase({ reason: 'position-poll-durable', persist: true });
+            }
+            if (positionSyncInFlight) return false;
+
+            positionSyncReadInFlight = true;
+            try {
+                const row = await readMainPositionSyncRow();
+                if (row) await applySharedPositionFromMainRow(row);
+                return true;
+            } catch (error) {
+                return false;
+            } finally {
+                positionSyncReadInFlight = false;
             }
         }
 
@@ -5042,105 +5412,155 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         }
 
         async function broadcastCurrentPositionSnapshot(kind = 'response') {
-            if (!positionSyncRealtimeReady || !positionSyncRealtimeChannel || !navigator.onLine) return false;
-            const state = normalizePositionSyncState(getCurrentPositionState());
-            if (!state) return false;
-            try {
-                const result = await positionSyncRealtimeChannel.send({
-                    type: 'broadcast',
-                    event: 'position',
-                    payload: {
-                        sourceDeviceId: syncDeviceId,
-                        state,
-                        stateHash: positionStateFingerprint(state),
-                        clientUpdatedAt: new Date().toISOString(),
-                        kind
-                    }
-                });
-                const status = String(result || '').toLowerCase();
-                return !status.includes('error') && !status.includes('timed');
-            } catch (error) {
-                return false;
-            }
+            if (!positionSyncInitialized) return false;
+            const envelope = selectLatestPositionSyncEnvelope([
+                positionSyncKnownEnvelope,
+                positionSyncDurableState?.envelope,
+                positionSyncPendingState?.envelope,
+                readPersistedPositionSyncEnvelope()
+            ]);
+            if (!envelope) return false;
+            return sendPositionSyncEnvelope(envelope, kind);
         }
 
-        async function requestLatestPositionSync() {
-            if (!positionSyncRealtimeReady || !positionSyncRealtimeChannel || positionSyncPendingState || !navigator.onLine) return false;
+        async function requestLatestPositionSync(options = {}) {
+            if (!positionSyncInitialized || !positionSyncRealtimeReady || !positionSyncRealtimeChannel || !navigator.onLine) return false;
+            const now = Date.now();
+            if (!options.force && now - positionSyncLastRequestAt < 1500) return false;
+            positionSyncLastRequestAt = now;
             try {
                 const result = await positionSyncRealtimeChannel.send({
                     type: 'broadcast',
                     event: 'position-request',
-                    payload: { sourceDeviceId: syncDeviceId, requestedAt: new Date().toISOString() }
+                    payload: {
+                        sourceDeviceId: syncDeviceId,
+                        requestedAt: new Date().toISOString(),
+                        knownEventId: positionSyncKnownEnvelope?.eventId || '',
+                        knownClock: Number(positionSyncKnownEnvelope?.clock) || 0
+                    }
                 });
                 const status = String(result || '').toLowerCase();
-                return !status.includes('error') && !status.includes('timed');
+                const succeeded = !status.includes('error') && !status.includes('timed');
+                if (!succeeded) {
+                    stopPositionSyncRealtime();
+                    schedulePositionSyncReconnect(900);
+                }
+                return succeeded;
             } catch (error) {
+                stopPositionSyncRealtime();
+                schedulePositionSyncReconnect(900);
                 return false;
             }
         }
 
+        function schedulePositionSyncReconnect(delayMs = 1200) {
+            if (positionSyncReconnectTimer || !navigator.onLine) return;
+            positionSyncReconnectTimer = setTimeout(() => {
+                positionSyncReconnectTimer = 0;
+                startPositionSyncRealtime();
+            }, Math.max(200, Number(delayMs) || 1200));
+        }
+
         async function startPositionSyncRealtime() {
-            if (positionSyncRealtimeChannel || !navigator.onLine) return;
+            if (positionSyncRealtimeChannel || !navigator.onLine) return positionSyncRealtimeReady;
             try {
                 const client = await getSupabaseClient();
-                positionSyncRealtimeChannel = client
-                    .channel('english-card-position-broadcast-v1')
+                const channel = client
+                    .channel('english-card-position-broadcast-v1', {
+                        config: { broadcast: { ack: true, self: false } }
+                    })
                     .on('broadcast', {
                         event: 'position'
                     }, payload => {
                         const message = payload?.payload || payload;
-                        const state = normalizePositionSyncState(message?.state);
-                        if (!state) return;
-                        applyPositionSyncRow({
+                        const envelope = normalizePositionSyncEnvelope(message?.envelope, message?.state, {
+                            sourceDeviceId: String(message?.sourceDeviceId || ''),
+                            actionAt: String(message?.clientUpdatedAt || '')
+                        });
+                        if (!envelope) return;
+                        const row = {
                             data: {
-                                state,
-                                sourceDeviceId: String(message.sourceDeviceId || ''),
+                                state: envelope.state,
+                                envelope,
+                                sourceDeviceId: envelope.sourceDeviceId,
                                 revision: 0,
                                 transport: 'broadcast',
-                                clientUpdatedAt: String(message.clientUpdatedAt || ''),
+                                clientUpdatedAt: envelope.actionAt,
                                 broadcastKind: String(message.kind || 'action')
                             },
-                            updated_at: new Date().toISOString()
-                        });
+                            updated_at: envelope.actionAt || new Date().toISOString()
+                        };
+                        if (!positionSyncInitialized) deferPositionSyncRow(row);
+                        else applyPositionSyncRow(row);
                     })
                     .on('broadcast', {
                         event: 'position-request'
                     }, payload => {
-                        const requester = String(payload?.payload?.sourceDeviceId || '');
-                        if (requester && requester !== syncDeviceId) broadcastCurrentPositionSnapshot('response');
+                        if (!positionSyncInitialized) return;
+                        const request = payload?.payload || {};
+                        const requester = String(request.sourceDeviceId || '');
+                        if (!requester || requester === syncDeviceId) return;
+                        const knownEventId = String(request.knownEventId || '');
+                        const localEnvelope = positionSyncKnownEnvelope;
+                        if (!localEnvelope) return;
+                        // 기기별 clock 크기만으로 최신 여부를 단정하지 않고, 동일 event일 때만 응답을 생략한다.
+                        if (localEnvelope.eventId === knownEventId) return;
+                        broadcastCurrentPositionSnapshot('response');
                     });
-                await new Promise(resolve => {
+                positionSyncRealtimeChannel = channel;
+                return await new Promise(resolve => {
                     let initialResolved = false;
                     const resolveInitial = ready => {
                         if (initialResolved) return;
                         initialResolved = true;
                         resolve(ready);
                     };
-                    const timeoutId = setTimeout(() => resolveInitial(false), 3500);
-                    positionSyncRealtimeChannel.subscribe(status => {
+                    const timeoutId = setTimeout(() => {
+                        if (positionSyncRealtimeChannel === channel && !positionSyncRealtimeReady) {
+                            positionSyncRealtimeChannel = null;
+                            try { client.removeChannel(channel); } catch (error) {}
+                            schedulePositionSyncReconnect(1200);
+                        }
+                        resolveInitial(false);
+                    }, 3500);
+                    channel.subscribe(status => {
+                        if (positionSyncRealtimeChannel !== channel) return;
                         if (status === 'SUBSCRIBED') {
                             positionSyncRealtimeReady = true;
+                            clearTimeout(positionSyncReconnectTimer);
+                            positionSyncReconnectTimer = 0;
                             clearTimeout(timeoutId);
                             resolveInitial(true);
-                            if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-realtime-ready' });
+                            if (positionSyncInitialized) {
+                                if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-realtime-ready' });
+                                else setTimeout(() => requestLatestPositionSync({ force: true }), 80);
+                            }
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                             positionSyncRealtimeReady = false;
+                            positionSyncRealtimeChannel = null;
                             clearTimeout(timeoutId);
                             resolveInitial(false);
+                            try { client.removeChannel(channel); } catch (error) {}
+                            schedulePositionSyncReconnect(status === 'TIMED_OUT' ? 1800 : 900);
                         }
                     });
                 });
             } catch (error) {
                 positionSyncRealtimeReady = false;
-                // Broadcast가 막히면 기존 주 행에 저장해 자동 동기화를 유지한다.
+                positionSyncRealtimeChannel = null;
+                schedulePositionSyncReconnect(1500);
+                return false;
             }
         }
 
         function stopPositionSyncRealtime() {
             positionSyncRealtimeReady = false;
-            if (!positionSyncRealtimeChannel || !supabaseClient) return;
-            try { supabaseClient.removeChannel(positionSyncRealtimeChannel); } catch (error) {}
+            clearTimeout(positionSyncReconnectTimer);
+            positionSyncReconnectTimer = 0;
+            const channel = positionSyncRealtimeChannel;
             positionSyncRealtimeChannel = null;
+            if (!channel || !supabaseClient) return;
+            try { supabaseClient.removeChannel(channel); } catch (error) {}
         }
 
         async function initializePositionSync() {
@@ -5148,23 +5568,75 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             positionSyncSeenRevision = Number(safeStorageGet(POSITION_SYNC_REVISION_KEY)) || 0;
             positionSyncSeenUpdatedAt = String(safeStorageGet(POSITION_SYNC_UPDATED_AT_KEY) || '');
             positionSyncLastPublishedHash = String(safeStorageGet(POSITION_SYNC_HASH_KEY) || '');
+            positionSyncClock = Number(safeStorageGet(POSITION_SYNC_CLOCK_KEY)) || 0;
+            positionSyncKnownEnvelope = selectLatestPositionSyncEnvelope([
+                positionSyncKnownEnvelope,
+                readPersistedPositionSyncEnvelope()
+            ]);
+            if (positionSyncKnownEnvelope) rememberPositionSyncEnvelope(positionSyncKnownEnvelope);
+            positionSyncDurableState ||= readPersistedPositionSyncDurable();
             positionSyncPendingState ||= readPersistedPositionSyncPending();
+            // v1에서 Broadcast가 끝난 항목은 durable로만 승계하고 실시간 적용 차단은 즉시 해제한다.
+            const oldPending = safeJsonParse(safeStorageGet(POSITION_SYNC_PENDING_KEY), null);
+            if (Number(oldPending?.broadcastedAt) > 0) persistPositionSyncPending(null);
+
+            let row = null;
             try {
-                await startPositionSyncRealtime();
-                if (positionSyncPendingState) {
-                    await uploadPositionToSupabase({ reason: 'position-startup-pending', persist: true });
-                } else {
-                    const row = await readMainPositionSyncRow();
-                    if (row) {
-                        await applySharedPositionFromMainRow(row, { force: true });
-                    } else {
-                        const state = normalizePositionSyncState(getCurrentPositionState());
-                        if (state) queuePositionSync(state, 0, { force: true, reason: 'position-migration' });
-                        await uploadPositionToSupabase({ reason: 'position-migration', force: true, persist: true });
+                const realtimePromise = startPositionSyncRealtime();
+                positionSyncReadInFlight = true;
+                try { row = await readMainPositionSyncRow(); }
+                finally { positionSyncReadInFlight = false; }
+
+                const remoteEnvelope = row ? getSharedPositionEnvelope(row.data, row.updated_at) : null;
+                const localEnvelope = selectLatestPositionSyncEnvelope([
+                    positionSyncKnownEnvelope,
+                    positionSyncDurableState?.envelope,
+                    positionSyncPendingState?.envelope
+                ]);
+                if (remoteEnvelope && (!localEnvelope || comparePositionSyncEnvelopes(remoteEnvelope, localEnvelope) >= 0)) {
+                    const listWasOpenBeforePositionRestore = isListModalCurrentlyOpen();
+                    await applySharedPositionFromMainRow(row);
+                    if (!listWasOpenBeforePositionRestore && remoteEnvelope.state.isListOpen && isListModalCurrentlyOpen()) {
+                        // 작은 위치 조회가 전체 카드 조회보다 먼저 끝난 경우, 뒤이어 오는 첫 카드 병합은
+                        // 목록을 닫게 하지 않고 현재 앵커를 보존한 채 바로 적용할 수 있다.
+                        positionSyncOpenedListDuringInitialization = true;
                     }
+                    if (comparePositionSyncEnvelopes(remoteEnvelope, localEnvelope) === 0) clearPositionSyncRecordsThrough(remoteEnvelope);
+                } else if (localEnvelope) {
+                    rememberPositionSyncEnvelope(localEnvelope);
+                    const record = {
+                        state: localEnvelope.state,
+                        hash: localEnvelope.stateHash,
+                        // 다른 기기 시계가 어긋나도 영구 저장 타이머가 과도하게 길어지지 않게 로컬 대기 시작 시각을 쓴다.
+                        queuedAt: Date.now(),
+                        broadcastedAt: 0,
+                        envelope: localEnvelope
+                    };
+                    if (!positionSyncDurableState) persistPositionSyncDurable(record);
+                    if (!positionSyncPendingState) persistPositionSyncPending(record);
+                } else if (!row) {
+                    const state = normalizePositionSyncState(getCurrentPositionState());
+                    if (state) queuePositionSync(state, 0, { force: true, reason: 'position-migration' });
+                }
+
+                positionSyncInitialized = true;
+                await realtimePromise;
+                flushDeferredPositionSyncRow();
+                if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-startup-live' });
+                else requestLatestPositionSync({ force: true });
+                if (positionSyncDurableState && !positionSyncTimer) {
+                    const quietFor = Date.now() - Number(positionSyncDurableState.queuedAt || 0);
+                    schedulePositionSyncUpload(
+                        Math.max(80, POSITION_SYNC_DURABLE_DELAY_MS - quietFor),
+                        { reason: 'position-startup-durable', persist: true }
+                    );
                 }
                 return true;
             } catch (error) {
+                positionSyncInitialized = true;
+                startPositionSyncRealtime();
+                if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-startup-retry' });
+                else requestLatestPositionSync({ force: true });
                 return false;
             }
         }
@@ -5289,6 +5761,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     applySyncPayloadToLocalState(nextLocalPayload, { preserveView: true, source: changedWhileSaving ? 'sync-rebase' : 'sync-merge' });
                 }
                 setSyncBasePayload(savedPayload);
+                // 병합에서 원격 위치가 승리했을 때도 다음 poll까지 오래된 화면/응답을 유지하지 않는다.
+                await applySharedPositionFromMainRow(savedRow);
                 currentSyncConflicts = Array.isArray(nextLocalPayload.syncConflicts) ? nextLocalPayload.syncConflicts.slice(-40) : [];
                 syncConflictCount = currentSyncConflicts.length;
                 shouldFollowUpUpload = syncPayloadFingerprint(buildSyncPayload()) !== syncPayloadFingerprint(savedPayload);
@@ -5591,7 +6065,11 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 const row = await readSupabaseRow(currentSyncCode);
                 if (row) {
                     if (isRemoteNewer(row.updated_at) || hasPendingSync() || localChangeRevision !== revisionBeforeRead) {
-                        applySupabaseRow(row, { silent: true, revisionBeforeRead });
+                        applySupabaseRow(row, {
+                            silent: true,
+                            revisionBeforeRead,
+                            allowWhileListOpen: positionSyncOpenedListDuringInitialization
+                        });
                     }
                     else updateSyncStatus('최신 상태', 'ok');
                 } else if (localDataRecoveryRequired) {
@@ -5602,6 +6080,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 startSupabaseRealtime();
             } catch (error) {
                 handleSyncFailure('자동 동기화 초기화', error, { markPending: true });
+            } finally {
+                positionSyncOpenedListDuringInitialization = false;
             }
         }
 
@@ -5641,6 +6121,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             box.addEventListener('scroll', () => {
                 if (box.scrollLeft !== 0) box.scrollLeft = 0;
+                if (isListModalCurrentlyOpen()) scheduleListPositionSave(140);
             }, { passive: true });
         }
 
@@ -5681,20 +6162,24 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     clearTimeout(syncSaveTimer);
                     uploadLocalDataToSupabase({ reason: 'visibility-hidden-flush' });
                 }
-                if (document.visibilityState === 'hidden' && navigator.onLine && positionSyncPendingState && !positionSyncInFlight) {
+                if (document.visibilityState === 'hidden' && navigator.onLine
+                    && (positionSyncPendingState || positionSyncDurableState || readPersistedPositionSyncDurable())
+                    && !positionSyncInFlight) {
                     clearTimeout(positionSyncTimer);
                     positionSyncTimer = 0;
                     uploadPositionToSupabase({ reason: 'position-hidden-flush', persist: true });
                 } else if (document.visibilityState === 'visible') {
+                    startPositionSyncRealtime();
                     refreshPositionSync();
-                    setTimeout(requestLatestPositionSync, 120);
+                    setTimeout(() => requestLatestPositionSync({ force: true }), 120);
                 }
             });
 
             startSyncPolling();
             startPositionSyncPolling();
             scheduleInitialAutoSyncData();
-            startPositionSyncRealtime();
+            // 전체 카드(약 2MB) 동기화를 기다리지 않고 작은 위치 정보부터 먼저 맞춘다.
+            runPositionSyncInitialization();
         }
 
         function normalizeCardIdentityText(value) {
@@ -7355,6 +7840,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     lastListScrollAnchor = anchor;
                     requestAnimationFrame(() => {
                         if (listModal.classList.contains('hidden')) return;
+                        const categoryContainer = document.getElementById('category-container');
+                        if (categoryContainer) categoryContainer.scrollTop = state.categoryScrollTop;
                         if (anchor) restoreListScrollAnchor(anchor, { suppressSync: true });
                         else if (listContainer) {
                             cancelListScrollRestore();
@@ -7386,6 +7873,22 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 }, 360);
             }
         }
+
+        function releaseRemotePositionSuppressionForUserAction() {
+            if (!isApplyingRemotePosition) return;
+            // 원격 render의 echo만 막고, 그 직후 사용자가 직접 누른 다음/이전/목록 조작은 버리지 않는다.
+            isApplyingRemotePosition = false;
+            if (isRestoringListScrollAnchor) cancelListScrollRestore();
+            if (deferredPositionSyncRow) {
+                clearTimeout(positionSyncDeferredApplyTimer);
+                positionSyncDeferredApplyTimer = setTimeout(() => {
+                    positionSyncDeferredApplyTimer = 0;
+                    flushDeferredPositionSyncRow();
+                }, 1000);
+            }
+        }
+        document.addEventListener('pointerdown', releaseRemotePositionSuppressionForUserAction, true);
+        document.addEventListener('keydown', releaseRemotePositionSuppressionForUserAction, true);
 
         function restoreLastPosition() {
             const raw = safeStorageGet(POSITION_KEY);
@@ -7641,6 +8144,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     activeListCategory = 'all';
                     isListBookmarkMode = false;
                     renderListModal();
+                    saveCurrentPosition({ delayMs: 80, reason: 'list-category-all' });
                 }
             });
 
@@ -7658,6 +8162,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 onClick: () => {
                     isListBookmarkMode = true;
                     renderListModal();
+                    saveCurrentPosition({ delayMs: 80, reason: 'list-category-bookmarks' });
                 }
             });
 
@@ -7995,9 +8500,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         let listScrollAnchorRestoreId = 0;
 
         function getListScrollTargets(container) {
+            if (container && container.scrollHeight > container.clientHeight + 1) return [container];
             if (isMobileListViewport()) return container ? [container] : [];
             const candidates = [
-                container,
                 document.getElementById('app-shell'),
                 document.scrollingElement
             ];
@@ -8007,9 +8512,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         function normalizePersistedListScrollAnchor(anchor) {
             if (!anchor || !anchor.rowKey) return null;
             const viewportTop = Number(anchor.viewportTop);
-            const containerOffset = anchor.containerOffset === null || anchor.containerOffset === undefined || anchor.containerOffset === ''
+            const rawRowIndex = anchor.rowIndex === null || anchor.rowIndex === undefined || anchor.rowIndex === ''
+                ? NaN
+                : Number(anchor.rowIndex);
+            const rawRowOffsetRatio = anchor.rowOffsetRatio === null || anchor.rowOffsetRatio === undefined || anchor.rowOffsetRatio === ''
+                ? NaN
+                : Number(anchor.rowOffsetRatio);
+            const rawContainerOffset = anchor.containerOffset === null || anchor.containerOffset === undefined || anchor.containerOffset === ''
                 ? NaN
                 : Number(anchor.containerOffset);
+            const viewportHeight = Math.max(320, window.innerHeight || document.documentElement.clientHeight || 0);
+            const containerOffset = Number.isFinite(rawContainerOffset) && Math.abs(rawContainerOffset) <= viewportHeight * 2
+                ? rawContainerOffset
+                : NaN;
             const scrollTops = Array.isArray(anchor.scrollTops)
                 ? anchor.scrollTops.map(value => Number(value) || 0)
                 : (Array.isArray(anchor.scrollStates)
@@ -8017,8 +8532,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     : []);
             return {
                 rowKey: String(anchor.rowKey),
+                rowIndex: Number.isFinite(rawRowIndex) ? Math.max(0, Math.floor(rawRowIndex)) : null,
                 viewportTop: Number.isFinite(viewportTop) ? viewportTop : 0,
                 containerOffset: Number.isFinite(containerOffset) ? containerOffset : null,
+                rowOffsetRatio: Number.isFinite(rawRowOffsetRatio) ? Math.max(-1, Math.min(1, rawRowOffsetRatio)) : null,
                 scrollTops
             };
         }
@@ -8034,12 +8551,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             if (!container) return null;
             const targets = getListScrollTargets(container);
             const containerRect = container.getBoundingClientRect();
+            const visibleTop = Math.max(0, containerRect.top);
             const viewportTop = Number.isFinite(saved.containerOffset)
-                ? containerRect.top + saved.containerOffset
-                : saved.viewportTop;
+                ? visibleTop + saved.containerOffset
+                : Math.max(visibleTop, Number(saved.viewportTop) || visibleTop);
             return {
                 rowKey: saved.rowKey,
+                rowIndex: saved.rowIndex,
                 viewportTop,
+                visibleTop,
+                rowOffsetRatio: saved.rowOffsetRatio,
                 scrollStates: targets.map((target, index) => ({
                     target,
                     scrollTop: Number(saved.scrollTops[index]) || 0
@@ -8055,10 +8576,27 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const visibleBottom = Math.min(window.innerHeight || document.documentElement.clientHeight, containerRect.bottom);
             const probeX = Math.min(containerRect.right - 8, containerRect.left + 24);
             let anchorRow = null;
-            for (let probeY = visibleTop + 4; probeY < Math.min(visibleBottom, visibleTop + 100); probeY += 16) {
-                const candidate = document.elementFromPoint(probeX, probeY)?.closest('[data-list-row-key]');
-                if (candidate && container.contains(candidate)) {
-                    anchorRow = candidate;
+            const findRowAtPoint = probeY => {
+                const elements = typeof document.elementsFromPoint === 'function'
+                    ? document.elementsFromPoint(probeX, probeY)
+                    : [document.elementFromPoint(probeX, probeY)].filter(Boolean);
+                for (const element of elements) {
+                    const candidate = element?.closest?.('[data-list-row-key]');
+                    if (candidate && container.contains(candidate)) return candidate;
+                }
+                return null;
+            };
+            for (let probeY = visibleTop + 4; probeY < visibleBottom; probeY += 20) {
+                anchorRow = findRowAtPoint(probeY);
+                if (anchorRow) break;
+            }
+            if (!anchorRow) {
+                const rows = container.querySelectorAll('[data-list-row-key]');
+                for (const row of rows) {
+                    const rect = row.getBoundingClientRect();
+                    if (rect.bottom <= visibleTop + 1) continue;
+                    if (rect.top >= visibleBottom - 1) break;
+                    anchorRow = row;
                     break;
                 }
             }
@@ -8067,8 +8605,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             return {
                 rowKey: anchorRow?.dataset.listRowKey || '',
+                rowIndex: anchorRow?.dataset.listRowKey && Number.isInteger(listRenderState?.indexByKey?.get(anchorRow.dataset.listRowKey))
+                    ? listRenderState.indexByKey.get(anchorRow.dataset.listRowKey)
+                    : null,
                 viewportTop: anchorRect ? anchorRect.top : visibleTop,
-                containerOffset: anchorRect ? anchorRect.top - containerRect.top : visibleTop - containerRect.top,
+                // 기기마다 목록 컨테이너의 문서상 top이 달라지므로 보이는 영역 기준 오프셋만 공유한다.
+                containerOffset: anchorRect ? anchorRect.top - visibleTop : 0,
+                // 기기별 글자 크기로 행 높이가 달라도 같은 행 안의 보이는 비율을 유지한다.
+                rowOffsetRatio: anchorRect?.height
+                    ? Math.max(-1, Math.min(1, (anchorRect.top - visibleTop) / anchorRect.height))
+                    : 0,
                 scrollStates: getListScrollTargets(container).map(target => ({
                     target,
                     scrollTop: target.scrollTop
@@ -8089,12 +8635,29 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             cancelListScrollRestore();
             if (!savedAnchor) return;
             const restoreId = listScrollAnchorRestoreId;
-            lastListScrollAnchor = savedAnchor;
+            let resolvedAnchor = savedAnchor;
+            let targetIndex = listRenderState?.indexByKey?.get(resolvedAnchor.rowKey);
+            if (!Number.isInteger(targetIndex) && listRenderState?.list?.length) {
+                const builtinMatch = /^builtin:(\d+)$/.exec(savedAnchor.rowKey);
+                const nearestOriginalIndex = builtinMatch
+                    ? listRenderState.list.reduce((best, card, index) => {
+                        const distance = Math.abs((Number(card.originalIdx) || 0) - Number(builtinMatch[1]));
+                        return distance < best.distance ? { index, distance } : best;
+                    }, { index: 0, distance: Infinity }).index
+                    : 0;
+                targetIndex = builtinMatch
+                    ? nearestOriginalIndex
+                    : (Number.isInteger(savedAnchor.rowIndex)
+                        ? Math.max(0, Math.min(listRenderState.list.length - 1, savedAnchor.rowIndex))
+                        : 0);
+                const fallbackCard = listRenderState.list[targetIndex];
+                if (fallbackCard) resolvedAnchor = { ...savedAnchor, rowKey: getListRowKey(fallbackCard), rowIndex: targetIndex };
+            }
+            lastListScrollAnchor = resolvedAnchor;
             isRestoringListScrollAnchor = true;
             const pendingContainer = document.getElementById('list-container');
-            const targetIndex = listRenderState?.indexByKey?.get(savedAnchor.rowKey);
-            if (pendingContainer && !getListRowElement(pendingContainer, savedAnchor.rowKey) && Number.isInteger(targetIndex)) {
-                const row = await ensureListRowRendered(savedAnchor.rowKey);
+            if (pendingContainer && !getListRowElement(pendingContainer, resolvedAnchor.rowKey) && Number.isInteger(targetIndex)) {
+                const row = await ensureListRowRendered(resolvedAnchor.rowKey);
                 if (restoreId !== listScrollAnchorRestoreId) return;
                 if (!row) {
                     isRestoringListScrollAnchor = false;
@@ -8102,7 +8665,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 }
             }
 
-            const runtimeAnchor = hydrateListScrollAnchor(savedAnchor);
+            const runtimeAnchor = hydrateListScrollAnchor(resolvedAnchor);
             if (!runtimeAnchor || restoreId !== listScrollAnchorRestoreId) {
                 if (restoreId === listScrollAnchorRestoreId) isRestoringListScrollAnchor = false;
                 return;
@@ -8157,7 +8720,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                 const anchorRow = getListRowElement(currentContainer, anchor.rowKey);
 
                 if (anchorRow) {
-                    const offsetError = anchorRow.getBoundingClientRect().top - anchor.viewportTop;
+                    const anchorRect = anchorRow.getBoundingClientRect();
+                    const currentVisibleTop = Math.max(0, currentContainer.getBoundingClientRect().top);
+                    const desiredTop = Number.isFinite(anchor.rowOffsetRatio)
+                        ? currentVisibleTop + anchor.rowOffsetRatio * anchorRect.height
+                        : anchor.viewportTop;
+                    const offsetError = anchorRect.top - desiredTop;
                     stablePasses = Math.abs(offsetError) <= 0.5 ? stablePasses + 1 : 0;
                     let correction = offsetError;
                     const scrollTargets = getListScrollTargets(currentContainer);
@@ -9063,6 +9631,7 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const scrollToRestore = restoreScroll !== null
                 ? Number(restoreScroll) || 0
                 : Number(savedState.listScrollTop) || 0;
+            const categoryScrollToRestore = Math.max(0, Number(savedState.categoryScrollTop) || 0);
             if (anchorToRestore) {
                 lastListScrollAnchor = anchorToRestore;
                 isRestoringListScrollAnchor = true;
@@ -9073,6 +9642,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             document.getElementById('app-shell')?.classList.add('list-modal-open');
             modal.classList.remove('hidden');
             requestAnimationFrame(async () => {
+                const categoryContainer = document.getElementById('category-container');
+                if (categoryContainer) categoryContainer.scrollTop = categoryScrollToRestore;
                 if (anchorToRestore) {
                     restoreListScrollAnchor(anchorToRestore);
                 } else {
