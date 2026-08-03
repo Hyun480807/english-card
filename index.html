@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
-    <meta name="tts-build-version" content="2026-08-04-list-answer-persistence-v1">
+    <meta name="tts-build-version" content="2026-08-04-list-answer-bidirectional-realtime-v2">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>통합 핵심 영어 문장</title>
@@ -5733,6 +5733,65 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
         }
 
+
+        function applyListRevealRealtimePayload(rawPayload) {
+            const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
+            // Broadcast 채널 자체가 self:false이므로 같은 연결의 에코는 오지 않는다.
+            // 브라우저 데이터 복원으로 PC·모바일 deviceId가 우연히 같아져도 서로의 변경은 받아야 한다.
+            const incomingStates = normalizeListRevealStateMap(
+                payload.listRevealStates || payload.states,
+                payload.listRevealedRowKeys || []
+            );
+            if (!Object.keys(incomingStates).length) return false;
+            const merged = mergeListRevealStateMaps(listRevealStates, incomingStates);
+            if (listRevealStateFingerprint(merged) === listRevealStateFingerprint(listRevealStates)) return false;
+            applyListRevealStateMap(merged, [], { replace: true });
+            safeStorageSet(LIST_REVEAL_STATE_KEY, JSON.stringify(listRevealStates));
+            const localPosition = normalizePositionSyncState(getCurrentPositionState());
+            if (localPosition) safeStorageSet(POSITION_KEY, JSON.stringify(localPosition));
+            refreshRenderedListRevealStates();
+            return true;
+        }
+
+        async function sendListRevealRealtime(changedRowKey = '', kind = 'action') {
+            if (!navigator.onLine) return false;
+            const key = String(changedRowKey || '').trim();
+            const states = key && listRevealStates[key]
+                ? { [key]: listRevealStates[key] }
+                : normalizeListRevealStateMap(listRevealStates);
+            if (!Object.keys(states).length) return false;
+            if (!positionSyncRealtimeReady || !positionSyncRealtimeChannel) {
+                startPositionSyncRealtime();
+                return false;
+            }
+            try {
+                const result = await positionSyncRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'list-reveal',
+                    payload: {
+                        senderDeviceId: syncDeviceId,
+                        sourceDeviceId: syncDeviceId,
+                        changedRowKey: key,
+                        listRevealStates: states,
+                        listRevealedRowKeys: getRevealedRowKeysFromStateMap(states),
+                        sentAt: new Date().toISOString(),
+                        kind
+                    }
+                });
+                const status = String(result || '').toLowerCase();
+                const succeeded = !status.includes('error') && !status.includes('timed');
+                if (!succeeded) {
+                    stopPositionSyncRealtime();
+                    schedulePositionSyncReconnect(900);
+                }
+                return succeeded;
+            } catch (error) {
+                stopPositionSyncRealtime();
+                schedulePositionSyncReconnect(900);
+                return false;
+            }
+        }
+
         async function uploadPositionToSupabase(options = {}) {
             if (positionSyncInFlight) {
                 positionSyncFollowUp = true;
@@ -5937,6 +5996,12 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                         else applyPositionSyncRow(row);
                     })
                     .on('broadcast', {
+                        event: 'list-reveal'
+                    }, payload => {
+                        const message = payload?.payload || payload || {};
+                        applyListRevealRealtimePayload(message);
+                    })
+                    .on('broadcast', {
                         event: 'position-request'
                     }, payload => {
                         if (!positionSyncInitialized) return;
@@ -5977,6 +6042,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                             if (positionSyncInitialized) {
                                 if (positionSyncPendingState) uploadPositionToSupabase({ reason: 'position-realtime-ready' });
                                 else setTimeout(() => requestLatestPositionSync({ force: true }), 80);
+                                // 모바일 Safari가 백그라운드에서 채널을 다시 잡은 직후에도
+                                // 정답 공개 상태만큼은 별도 메시지로 즉시 재공유한다.
+                                setTimeout(() => sendListRevealRealtime('', 'realtime-ready-snapshot'), 120);
                             }
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                             positionSyncRealtimeReady = false;
@@ -10061,6 +10129,19 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
                     else div.removeAttribute('data-list-row-revealed');
                     sentenceBtn.textContent = willReveal ? getUiButtonLabel('hide', '숨김') : getUiButtonLabel('sentence', '문장');
                     persistAppData('list-answer-state', { backup: false });
+                    // 정답 체크는 화면 위치 동기화 대기열과 분리해서 즉시 전송한다.
+                    // 전용 Broadcast가 잠깐 끊겨도 0ms 위치 동기화와 영구 저장이 백업한다.
+                    sendListRevealRealtime(rowKey, 'button-action').then(sent => {
+                        if (!sent && navigator.onLine) {
+                            // 모바일 WebSocket이 잠깐 잠든 경우에도 메인 Supabase 행을 즉시 갱신해
+                            // PC의 postgres realtime 또는 보조 확인이 바로 받을 수 있게 한다.
+                            uploadLocalDataToSupabase({
+                                reason: 'list-answer-realtime-fallback',
+                                allowWhileListOpen: true
+                            });
+                        }
+                    });
+                    saveCurrentPosition({ delayMs: 0, reason: 'list-answer-immediate' });
                     scheduleListPositionSave(20);
                 });
                 bottomActionRow.appendChild(sentenceBtn);
@@ -10789,7 +10870,17 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         window.addEventListener('pagehide', savePositionBeforeLeaving);
         window.addEventListener('beforeunload', savePositionBeforeLeaving);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') savePositionBeforeLeaving();
+            if (document.visibilityState === 'hidden') {
+                savePositionBeforeLeaving();
+                return;
+            }
+            // 모바일 브라우저는 화면을 다시 켤 때 Broadcast 채널이 끊겨 있을 수 있으므로
+            // 즉시 재연결하고 최신 정답 상태를 양방향으로 교환한다.
+            startPositionSyncRealtime();
+            setTimeout(() => {
+                requestLatestPositionSync({ force: true });
+                sendListRevealRealtime('', 'visibility-resume-snapshot');
+            }, 120);
         });
         document.getElementById('list-container').addEventListener('dragover', (event) => {
             if (!listDragState) return;
