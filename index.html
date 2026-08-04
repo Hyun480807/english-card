@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
-    <meta name="tts-build-version" content="2026-08-04-list-answer-bidirectional-realtime-v2">
+    <meta name="tts-build-version" content="2026-08-04-native-tts-instant-local-rate-v1">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>통합 핵심 영어 문장</title>
@@ -7672,14 +7672,16 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
            영어와 한국어 모두 브라우저/운영체제의 speechSynthesis 음성을 사용한다. */
         const NATIVE_TTS_VOICE_KEY = STORAGE_KEY + '_native_tts_profile_v3_shared_eight';
         const NATIVE_TTS_PROFILE_DEFINITIONS = [
-            { id: 'bright-female', label: '밝은 여성', rate: 1.04, pitch: 1.18 },
-            { id: 'clear-female', label: '또렷한 여성', rate: 0.98, pitch: 1.10 },
-            { id: 'calm-female', label: '차분한 여성', rate: 0.90, pitch: 1.02 },
-            { id: 'soft-female', label: '부드러운 여성', rate: 0.94, pitch: 1.14 },
-            { id: 'lively-female', label: '경쾌한 여성', rate: 1.10, pitch: 1.24 },
+            // 일반 재생은 모든 프로필을 1.0배로 통일한다.
+            // 음성별 차이는 pitch만 유지하고, 느린 재생 버튼은 별도로 0.6배를 전달한다.
+            { id: 'bright-female', label: '밝은 여성', rate: 1.00, pitch: 1.18 },
+            { id: 'clear-female', label: '또렷한 여성', rate: 1.00, pitch: 1.10 },
+            { id: 'calm-female', label: '차분한 여성', rate: 1.00, pitch: 1.02 },
+            { id: 'soft-female', label: '부드러운 여성', rate: 1.00, pitch: 1.14 },
+            { id: 'lively-female', label: '경쾌한 여성', rate: 1.00, pitch: 1.24 },
             { id: 'natural-conversation', label: '자연스러운 회화', rate: 1.00, pitch: 0.96 },
-            { id: 'low-calm', label: '낮고 차분한 음성', rate: 0.88, pitch: 0.82 },
-            { id: 'quick-clear', label: '빠르고 또렷한 음성', rate: 1.14, pitch: 1.04 }
+            { id: 'low-calm', label: '낮고 차분한 음성', rate: 1.00, pitch: 0.82 },
+            { id: 'quick-clear', label: '빠르고 또렷한 음성', rate: 1.00, pitch: 1.04 }
         ];
         let nativeEnglishVoices = [];
         let nativeTtsProfiles = [];
@@ -7706,6 +7708,8 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             }
             const utterance = new SpeechSynthesisUtterance(cleanText);
             const isEnglish = String(lang || '').toLowerCase().startsWith('en');
+            // 첫 클릭 전에 음성 목록이 늦게 도착한 경우 즉시 한 번 더 갱신한다.
+            if (isEnglish && !nativeTtsProfiles.length) refreshTtsVoices();
             const selectedProfile = isEnglish ? getSelectedNativeTtsProfile() : null;
             const selectedVoice = isEnglish
                 ? (selectedProfile?.voice || getTtsVoiceForLanguage(lang))
@@ -7716,9 +7720,10 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             } else {
                 utterance.lang = lang;
             }
-            const profileRate = selectedProfile?.rate || 1;
             const profilePitch = selectedProfile?.pitch || 1;
-            utterance.rate = Math.max(0.5, Math.min(1.5, (Number(speed) || 1) * profileRate));
+            // 일반 버튼/카드 클릭은 1.0배, 느리게 버튼은 전달된 0.6배 그대로 사용한다.
+            // 음성 프로필 때문에 실제 속도가 다시 느려지거나 빨라지지 않게 한다.
+            utterance.rate = Math.max(0.5, Math.min(1.5, Number(speed) || 1));
             utterance.pitch = Math.max(0.5, Math.min(1.5, profilePitch));
             utterance.volume = 1;
             utterance.onstart = (event) => {
@@ -7764,8 +7769,17 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             nativeSpeechCancel();
         }
 
-        function primeNativeTtsEngine() {
+        function primeNativeTtsEngine(event) {
             if (nativeTtsPrimed || !isMobileNativeTtsDevice() || !('speechSynthesis' in window)) return;
+
+            // 카드나 TTS 버튼을 직접 누른 경우에는 실제 문장 재생 자체가 엔진을 깨운다.
+            // 직전에 무음 문장을 큐에 넣었다가 취소하면서 생기는 첫 재생 지연을 막는다.
+            const target = event?.target;
+            if (target && typeof target.closest === 'function'
+                && target.closest('#flashcard, #tts-btn, #tts-btn-slow, #ko-tts-btn-front, #tts-voice-btn')) {
+                return;
+            }
+
             refreshTtsVoices();
             const synth = window.speechSynthesis;
             if (synth.speaking || synth.pending) {
@@ -7804,11 +7818,14 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
             const name = String(voice?.name || '').toLowerCase();
             const femaleName = /female|woman|samantha|victoria|karen|moira|tessa|serena|susan|zira|aria|jenny|sonia|emma|ava|allison|fiona|kate|olivia|joanna|kimberly|kendra|salli|amy|natasha|michelle|sarah|sara|jane|hazel|libby|maisie|molly|nora|ivy|linda|mary|helen|catherine|cortana|google us english/.test(name);
             const maleName = /\bmale\b|\bman\b|daniel|alex|fred|tom|david|mark|george|james|ryan|guy|christopher|eric|brian|aaron|arthur|oliver|matthew|stephen|rishi|john|michael|william|andrew|benjamin/.test(name);
-            let score = femaleName ? 3000 : (maleName ? 0 : 1500);
-            if (voice?.localService === true) score += 400;
-            if (voice?.default) score += 120;
-            if (normalizeTtsLanguage(voice?.lang) === 'en-us') score += 60;
-            if (/natural|enhanced|premium/.test(name)) score += 30;
+
+            // 로컬 음성 여부가 성별/이름보다 항상 우선하도록 점수를 크게 둔다.
+            // 온라인·클라우드 음성은 자연스럽더라도 첫 재생 준비 시간이 길 수 있다.
+            let score = voice?.localService === true ? 10000 : 0;
+            score += femaleName ? 3000 : (maleName ? 0 : 1500);
+            if (voice?.default) score += 500;
+            if (normalizeTtsLanguage(voice?.lang) === 'en-us') score += 200;
+            if (/online|cloud|network/.test(name)) score -= 1000;
             return score;
         }
 
@@ -7873,7 +7890,13 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
 
             const allEnglishVoices = ttsVoices
                 .filter(voice => normalizeTtsLanguage(voice.lang).startsWith('en'));
-            const sortedEnglishVoices = [...allEnglishVoices].sort((a, b) => {
+            const localEnglishVoices = allEnglishVoices.filter(voice => voice?.localService === true);
+            // 로컬 영어 음성이 하나라도 있으면 온라인 음성을 후보에서 완전히 제외한다.
+            // 로컬 음성이 전혀 없는 기기에서만 전체 영어 음성을 대체 후보로 사용한다.
+            const preferredEnglishVoices = localEnglishVoices.length
+                ? localEnglishVoices
+                : allEnglishVoices;
+            const sortedEnglishVoices = [...preferredEnglishVoices].sort((a, b) => {
                 const priorityDifference = getNativeEnglishVoicePriority(b) - getNativeEnglishVoicePriority(a);
                 if (priorityDifference) return priorityDifference;
                 return String(a.name || '').localeCompare(String(b.name || ''), 'en');
@@ -11259,9 +11282,9 @@ const originalCards = [{"ko":"누가 신경 써?","en":"Who cares","desc":"포�
         appHasFinishedInitialRender = true;
         initializeCategoryVerticalScroll();
         initializeDataSafetyControls();
-        const initializeDeferredTts = () => initializeTtsVoices();
-        if (typeof requestIdleCallback === 'function') requestIdleCallback(initializeDeferredTts, { timeout: 2500 });
-        else setTimeout(initializeDeferredTts, 450);
+        // 화면 렌더링 직후가 아니라 현재 실행 흐름에서 바로 음성 목록을 준비한다.
+        // 카드 첫 클릭 때 초기화 작업이 겹치면서 생기던 지연을 제거한다.
+        initializeTtsVoices();
         scheduleStartupBackup();
         initializeSyncControls();
         if (shouldRestoreListModal) {
